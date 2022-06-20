@@ -5,11 +5,10 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from timm.models.layers import trunc_normal_
 
-from utils.functions import clone_layer
+import utils.functions as functions
 
 
 
@@ -17,7 +16,7 @@ from utils.functions import clone_layer
 class TransformerEncoder(nn.Module):
     def __init__(self, positional_encoding_layer, encoder_layer, n_layer):
         super(TransformerEncoder, self).__init__()
-        self.encoder_layers = clone_layer(encoder_layer, n_layer)
+        self.encoder_layers = functions.clone_layer(encoder_layer, n_layer)
             
         self.positional_encoding = True if positional_encoding_layer is not None else False
         if self.positional_encoding:
@@ -26,7 +25,7 @@ class TransformerEncoder(nn.Module):
     def forward(self, x):
         """
         <input>
-        x : (n_batch, n_token, d_embed)
+            x : (n_batch, H, W, d_embed)
         """
         position_vector = None
         if self.positional_encoding:
@@ -46,7 +45,7 @@ class EncoderLayer(nn.Module):
         super(EncoderLayer, self).__init__()
         self.attention_layer = attention_layer
         self.feed_forward_layer = feed_forward_layer
-        self.norm_layers = clone_layer(norm_layer, 2)
+        self.norm_layers = functions.clone_layer(norm_layer, 2)
         self.dropout_layer = nn.Dropout(p=dropout)
         
         for p in self.attention_layer.parameters():
@@ -72,68 +71,90 @@ class EncoderLayer(nn.Module):
     
     
 class MultiHeadAttentionLayer(nn.Module):
-    def __init__(self, d_embed, n_head, max_seq_len=512, relative_position_embedding=True):
+    def __init__(self, d_embed, n_head, height, width, window_size, relative_position_embedding=True):
         super(MultiHeadAttentionLayer, self).__init__()
-        assert d_embed % n_head == 0  # Ckeck if d_model is divisible by n_head.
-        
-        self.d_embed = d_embed
         self.n_head = n_head
         self.d_k = d_embed // n_head
         self.scale = 1 / np.sqrt(self.d_k)
         
-        self.word_fc_layers = clone_layer(nn.Linear(d_embed, d_embed), 3)
+        # Linear layers
+        self.word_fc_layers = nn.Linear(d_embed, 3*d_embed)
         self.output_fc_layer = nn.Linear(d_embed, d_embed)
+        self.softmax = nn.Softmax(dim=-1)
         
-        self.max_seq_len = max_seq_len
+        # Sizes
+        self.window_size = window_size
+        self.nh = height // window_size
+        self.nw = width // window_size
+        self.shift_size = window_size // 2
+        self.window_size_sq = window_size * window_size
+        
+        # Masking matrix
+        self.mask = functions.masking_matrix(n_head, height, width, window_size, self.shift_size)
+        
         self.relative_position_embedding = relative_position_embedding
         if relative_position_embedding:
-            # Table of 1D relative position embedding
-            self.relative_position_embedding_table = nn.Parameter(torch.zeros(2*max_seq_len-1, n_head))
+            # Table of 2D relative position embedding
+            self.relative_position_embedding_table = nn.Parameter(torch.zeros((2*window_size-1)**2, n_head))
             trunc_normal_(self.relative_position_embedding_table, std=.02)
             
-            # Set 1D relative position embedding index.
-            coords_h = np.arange(max_seq_len)
-            coords_w = np.arange(max_seq_len-1, -1, -1)
-            coords = coords_h[:, None] + coords_w[None, :]
-            self.relative_position_index = coords.flatten()
+            # Set 2D relative position embedding index.
+            self.relative_position_index = functions.relative_position_index(window_size)
 
     def forward(self, x):
         """
         <input>
-        x : (n_batch, n_token, d_embed)
+            x : (n_batch, H, W, d_embed)
+            
+        <output>
+            attention : (n_batch, H, W, d_embed)
         """
-        n_batch = x.shape[0]
-        device = x.device
+        n_batch, H, W, _ = x.shape
         
-        # Apply linear layers.
-        query = self.word_fc_layers[0](x)
-        key = self.word_fc_layers[1](x)
-        value = self.word_fc_layers[2](x)
+        # Apply linear layers and split heads.
+        combined_values = self.word_fc_layers(x).view(n_batch, H, W, 3, self.n_head, self.d_k).contiguous()
+        combined_values = combined_values.permute(3, 0, 4, 1, 2, 5)
         
-        # Split heads.
-        query_out = query.view(n_batch, -1, self.n_head, self.d_k).transpose(1, 2)
-        key_out = key.view(n_batch, -1, self.n_head, self.d_k).contiguous().permute(0, 2, 3, 1)
-        value_out = value.view(n_batch, -1, self.n_head, self.d_k).transpose(1, 2)
+        # Q, K, V : (n_batch, n_head, H, W, d_k)
+        query, key, value = combined_values[0], combined_values[1], combined_values[2]
         
-        # Compute attention and concatenate matrices.
-        scores = torch.matmul(query_out * self.scale, key_out)
+        # Shift features in 4-class way.
+        query = functions.cyclic_shift(query, self.shift_size)
+        key = functions.cyclic_shift(key, self.shift_size)
+        value = functions.cyclic_shift(value, self.shift_size)
+
+        # Partition windows.
+        # Q, K, V : (n_batch, n_head, nh, nw, window_size^2, d_k)
+        query = functions.partition_window(query, self.window_size, self.nh, self.nw)
+        key = functions.partition_window(key, self.window_size, self.nh, self.nw)
+        value = functions.partition_window(value, self.window_size, self.nh, self.nw)
         
-        # Add relative position embedding
+        # Compute attention score.
+        scores = torch.matmul(query, key.transpose(-1, -2)) * self.scale
+        
+        # Add relative position embedding.
         if self.relative_position_embedding:
             position_embedding = self.relative_position_embedding_table[self.relative_position_index].view(
-                self.max_seq_len, self.max_seq_len, -1)
-            position_embedding = position_embedding.permute(2, 0, 1).contiguous().unsqueeze(0)
+                self.window_size_sq, self.window_size_sq, -1)
+            position_embedding = position_embedding.permute(2, 0, 1).contiguous()[None, :, None, None, ...]
             scores = scores + position_embedding
         
-#         if masking_matrix != None:
-#             scores = scores + masking_matrix * (-1e9) # Add very small negative number to padding columns.
-        probs = F.softmax(scores, dim=-1)
-        attention_out = torch.matmul(probs, value_out)
+        # Add masking matrix.
+        scores.masked_fill_(self.mask, -1e9)
+
+        # Compute attention probability and values.
+        scores = self.softmax(scores)
+        attention = torch.matmul(scores, value)
         
-        # Convert 4d tensor to proper 3d output tensor.
-        attention_out = attention_out.transpose(1, 2).contiguous().view(n_batch, -1, self.d_embed)
-            
-        return self.output_fc_layer(attention_out)
+        # Merge windows.
+        attention = functions.merge_window(attention, self.window_size)  # (n_batch, n_head, H, W, d_k)
+        
+        # Shift features reversely.
+        attention = functions.cyclic_shift(attention, -self.shift_size)
+        
+        # Concatenate heads and output features.
+        attention = attention.permute(0, 2, 3, 1, 4).contiguous().view(n_batch, H, W, -1)
+        return self.output_fc_layer(attention)
 
     
     
@@ -153,6 +174,7 @@ class PositionWiseFeedForwardLayer(nn.Module):
     
     
 # Sinusoidal positional encoding
+# Deprecated now
 class SinusoidalPositionalEncoding(nn.Module):
     def __init__(self, d_embed, max_seq_len=512, dropout=0.1):
         super(SinusoidalPositionalEncoding, self).__init__()
@@ -177,6 +199,7 @@ class SinusoidalPositionalEncoding(nn.Module):
     
     
 # Absolute position embedding
+# Deprecated now
 class AbsolutePositionEmbedding(nn.Module):
     def __init__(self, d_embed, max_seq_len=512, dropout=0.1):
         super(AbsolutePositionEmbedding, self).__init__()
@@ -194,13 +217,14 @@ class AbsolutePositionEmbedding(nn.Module):
     
 
 # Get a transformer encoder with its parameters.
-def get_transformer_encoder(d_embed=512,
+def get_transformer_encoder(d_embed=256,
                             positional_encoding=None,
                             relative_position_embedding=True,
                             n_layer=6,
-                            n_head=8,
-                            d_ff=2048,
-                            max_seq_len=512,
+                            n_head=4,
+                            d_ff=1024,
+                            n_patch=28,
+                            window_size=7,
                             dropout=0.1):
     
     if positional_encoding == 'Sinusoidal' or positional_encoding == 'sinusoidal' or positional_encoding == 'sin':
@@ -210,7 +234,7 @@ def get_transformer_encoder(d_embed=512,
     elif positional_encoding == None or positional_encoding == 'None':
         positional_encoding_layer = None
     
-    attention_layer = MultiHeadAttentionLayer(d_embed, n_head, max_seq_len, relative_position_embedding)
+    attention_layer = MultiHeadAttentionLayer(d_embed, n_head, n_patch, n_patch, window_size, relative_position_embedding)
     feed_forward_layer = PositionWiseFeedForwardLayer(d_embed, d_ff, dropout)
     norm_layer = nn.LayerNorm(d_embed, eps=1e-6)
     encoder_layer = EncoderLayer(attention_layer, feed_forward_layer, norm_layer, dropout)
