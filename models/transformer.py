@@ -27,7 +27,6 @@ class TransformerEncoder(nn.Module):
         <input>
             x : (n_batch, H, W, d_embed)
         """
-        position_vector = None
         if self.positional_encoding:
             out = self.positional_encoding_layer(x)
         else:
@@ -60,12 +59,16 @@ class EncoderLayer(nn.Module):
                 nn.init.zeros_(p)
         
     def forward(self, x):
+        """
+        <input>
+            x : (n_batch, H, W, d_embed)
+        """
         out1 = self.norm_layers[0](x)  # Layer norm first
         out1 = self.attention_layer(out1)
         out1 = self.dropout_layer(out1) + x
         
         out2 = self.norm_layers[1](out1)
-        out2 = self.feed_forward_layer(out1)
+        out2 = self.feed_forward_layer(out2)
         return self.dropout_layer(out2) + out1
     
     
@@ -240,3 +243,81 @@ def get_transformer_encoder(d_embed=256,
     encoder_layer = EncoderLayer(attention_layer, feed_forward_layer, norm_layer, dropout)
     
     return TransformerEncoder(positional_encoding_layer, encoder_layer, n_layer)
+
+
+#####################################################################################################
+
+
+# Main transformer decoder
+class TransformerDecoder(nn.Module):
+    def __init__(self, positional_encoding_layer, decoder_layer, n_layer):
+        super(TransformerDecoder, self).__init__()
+        self.decoder_layers = functions.clone_layer(decoder_layer, n_layer)
+            
+        self.positional_encoding = True if positional_encoding_layer is not None else False
+        if self.positional_encoding:
+            self.positional_encoding_layer = positional_encoding_layer
+        
+    def forward(self, x, z):
+        """
+        <input>
+            x : (n_batch, H, W, d_embed), input query
+            z : (n_batch, H, W, d_embed), encoder output
+        """
+        if self.positional_encoding:
+            out = self.positional_encoding_layer(x)
+        else:
+            out = x
+
+        for layer in self.decoder_layers:
+            out = layer(out, z)
+
+        return out
+    
+    
+    
+# Decoder layer
+class DecoderLayer(nn.Module):
+    def __init__(self, self_attention_layer, attention_layer, feed_forward_layer, norm_layer, dropout=0.1):
+        super(DecoderLayer, self).__init__()
+        self.self_attention_layer = self_attention_layer
+        self.attention_layer = attention_layer
+        self.feed_forward_layer = feed_forward_layer
+        self.norm_layers = functions.clone_layer(norm_layer, 3)
+        self.dropout_layer = nn.Dropout(p=dropout)
+        
+        for p in self.self_attention_layer.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+            else:
+                nn.init.zeros_(p)
+        for p in self.attention_layer.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+            else:
+                nn.init.zeros_(p)
+        for p in self.feed_forward_layer.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+            else:
+                nn.init.zeros_(p)
+        
+    def forward(self, x, z):
+        """
+        <input>
+            x : (n_batch, H, W, d_embed), input query
+            z : (n_batch, H, W, d_embed), encoder output
+        """
+        # Self-attention module
+        out1 = self.norm_layers[0](x)  # Layer norm first
+        out1 = self.self_attention_layer(out1)
+        out1 = self.dropout_layer(out1) + x
+        
+        # Attention module
+        out2 = self.norm_layers[1](out1)
+        out2 = self.attention_layer(out2, z)
+        out2 = self.dropout_layer(out2) + out1
+        
+        out3 = self.norm_layers[2](out2)
+        out3 = self.feed_forward_layer(out3)
+        return self.dropout_layer(out3) + out2
