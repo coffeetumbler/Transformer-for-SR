@@ -93,7 +93,8 @@ class MultiHeadAttentionLayer(nn.Module):
         self.window_size_sq = window_size * window_size
         
         # Masking matrix
-        self.mask = functions.masking_matrix(n_head, height, width, window_size, self.shift_size)
+        mask = functions.masking_matrix(n_head, height, width, window_size, self.shift_size)
+        self.register_buffer('mask', mask)
         
         self.relative_position_embedding = relative_position_embedding
         if relative_position_embedding:

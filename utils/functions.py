@@ -61,21 +61,43 @@ def cyclic_shift(x, shift_size):
 
 
 # Make masking matrix for 4-class split heads.
-def masking_matrix(n_head, H, W, window_size, shift_size, device='cpu'):
+def masking_matrix(n_head, H, W, window_size, shift_size,
+                   H_2=None, W_2=None, window_size_2=None, shift_size_2=None):
     """
     <input>
         n_head, H, W, window_size, shift_size : (int)
-        device : torch.device
+        (optional) H_2, W_2, window_size_2, shift_size_2 : (int) key configs, when key != query
         
     <return>
         masking_heads : (1, n_head, num_window_height, num_window_width, window_size^2, window_size^2)
+                        or (1, n_head, num_window_height, num_window_width, window_size^2, window_size_2^2)
     """
-    masking_heads = torch.zeros(4, H, W, dtype=int, device=device)
-    masking_heads[[1,3], :, :shift_size] = 1
-    masking_heads[[2,3], :shift_size] += 2
+    # Check if numbers of windows are the same when key != query.
+    if H_2 != None:
+        assert H_2 // window_size_2 == H // window_size
+        assert W_2 // window_size_2 == W // window_size
+    
+    # Partitioned regions for query.
+    masking_heads_query = torch.zeros(4, H, W, dtype=int)
+    masking_heads_query[[1,3], :, :shift_size] = 1
+    masking_heads_query[[2,3], :shift_size] += 2
 
-    masking_heads = partition_window(masking_heads.unsqueeze(0).unsqueeze(-1), window_size, H // window_size, W // window_size)
-    masking_heads = masking_heads - masking_heads.transpose(-1, -2)
+    masking_heads_query = partition_window(masking_heads_query.unsqueeze(0).unsqueeze(-1),
+                                           window_size, H // window_size, W // window_size)
+    
+    # Partitioned regions for key.
+    if H_2 == None:
+        masking_heads_key = masking_heads_query
+    else:
+        masking_heads_key = torch.zeros(4, H_2, W_2, dtype=int)
+        masking_heads_key[[1,3], :, :shift_size_2] = 1
+        masking_heads_key[[2,3], :shift_size_2] += 2
+
+        masking_heads_key = partition_window(masking_heads_key.unsqueeze(0).unsqueeze(-1),
+                                             window_size_2, H_2 // window_size_2, W_2 // window_size_2)
+    
+    # Create valid masks for heads.
+    masking_heads = masking_heads_query - masking_heads_key.transpose(-1, -2)
     masking_heads = masking_heads != 0
     
     return masking_heads.repeat_interleave(n_head // 4, dim=1)
