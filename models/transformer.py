@@ -359,3 +359,38 @@ class DecoderLayer(nn.Module):
         out3 = self.norm_layers[2](out2)
         out3 = self.feed_forward_layer(out3)
         return self.dropout_layer(out3) + out2
+    
+    
+    
+# Get a transformer decoder with its parameters.
+def get_transformer_decoder(d_embed=128,
+                            positional_encoding=None,
+                            relative_position_embedding=True,
+                            n_layer=12,
+                            n_head=4,
+                            d_ff=512,
+                            query_n_patch=56,
+                            query_window_size=8,
+                            key_n_patch=28,
+                            key_window_size=4,
+                            dropout=0.1):
+    
+    if positional_encoding == 'Sinusoidal' or positional_encoding == 'sinusoidal' or positional_encoding == 'sin':
+        positional_encoding_layer = SinusoidalPositionalEncoding(d_embed, max_seq_len, dropout)
+    elif positional_encoding == 'Absolute' or positional_encoding =='absolute' or positional_encoding == 'abs':
+        positional_encoding_layer = AbsolutePositionEmbedding(d_embed, max_seq_len, dropout)
+    elif positional_encoding == None or positional_encoding == 'None':
+        positional_encoding_layer = None
+    
+    self_attention_layer = MultiHeadSelfAttentionLayer(d_embed, n_head,
+                                                       query_n_patch, query_n_patch, query_window_size,
+                                                       relative_position_embedding)
+    attention_layer = MultiHeadAttentionLayer(d_embed, n_head,
+                                              query_n_patch, query_n_patch, query_window_size,
+                                              key_n_patch, key_n_patch, key_window_size,
+                                              relative_position_embedding)
+    feed_forward_layer = PositionWiseFeedForwardLayer(d_embed, d_ff, dropout)
+    norm_layer = nn.LayerNorm(d_embed, eps=1e-6)
+    decoder_layer = DecoderLayer(self_attention_layer, attention_layer, feed_forward_layer, norm_layer, dropout)
+    
+    return TransformerDecoder(positional_encoding_layer, decoder_layer, n_layer)
