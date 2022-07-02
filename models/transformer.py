@@ -73,65 +73,82 @@ class EncoderLayer(nn.Module):
     
     
     
+# Multi-head attention layer
 class MultiHeadAttentionLayer(nn.Module):
-    def __init__(self, d_embed, n_head, height, width, window_size, relative_position_embedding=True):
+    def __init__(self, d_embed, n_head,
+                 query_height, query_width, query_window_size,
+                 key_height, key_width, key_window_size,
+                 relative_position_embedding=True):
         super(MultiHeadAttentionLayer, self).__init__()
         self.n_head = n_head
         self.d_k = d_embed // n_head
         self.scale = 1 / np.sqrt(self.d_k)
         
         # Linear layers
-        self.word_fc_layers = nn.Linear(d_embed, 3*d_embed)
+        self.query_fc_layer = nn.Linear(d_embed, d_embed)
+        self.key_value_fc_layers = nn.Linear(d_embed, 2*d_embed)
         self.output_fc_layer = nn.Linear(d_embed, d_embed)
         self.softmax = nn.Softmax(dim=-1)
         
-        # Sizes
-        self.window_size = window_size
-        self.nh = height // window_size
-        self.nw = width // window_size
-        self.shift_size = window_size // 2
-        self.window_size_sq = window_size * window_size
+        # Configs
+        self.query_config = {'window_size' : query_window_size,
+                             'nh' : query_height // query_window_size,
+                             'nw' : query_width // query_window_size,
+                             'shift_size' : query_window_size // 2,
+                             'window_size_sq' : query_window_size * query_window_size}
+        
+        self.key_config = {'window_size' : key_window_size,
+                           'nh' : key_height // key_window_size,
+                           'nw' : key_width // key_window_size,
+                           'shift_size' : key_window_size // 2,
+                           'window_size_sq' : key_window_size * key_window_size}
         
         # Masking matrix
-        mask = functions.masking_matrix(n_head, height, width, window_size, self.shift_size)
+        mask = functions.masking_matrix(n_head, query_height, query_width, query_window_size, self.query_config['shift_size'],
+                                        key_height, key_width, key_window_size, self.key_config['shift_size'])
         self.register_buffer('mask', mask)
         
         self.relative_position_embedding = relative_position_embedding
         if relative_position_embedding:
             # Table of 2D relative position embedding
-            self.relative_position_embedding_table = nn.Parameter(torch.zeros((2*window_size-1)**2, n_head))
+            qk_ratio = query_window_size // key_window_size
+            self.relative_position_embedding_table = nn.Parameter(torch.zeros((2*query_window_size-qk_ratio)**2, n_head))
             trunc_normal_(self.relative_position_embedding_table, std=.02)
             
             # Set 2D relative position embedding index.
-            self.relative_position_index = functions.relative_position_index(window_size)
+            self.relative_position_index = functions.relative_position_index(query_window_size, key_window_size)
 
-    def forward(self, x):
+    def forward(self, x, z):
         """
         <input>
-            x : (n_batch, H, W, d_embed)
+            x : (n_batch, H, W, d_embed), input query
+            z : (n_batch, _H, _W, d_embed), encoder output
             
         <output>
             attention : (n_batch, H, W, d_embed)
         """
         n_batch, H, W, _ = x.shape
+        _, _H, _W, _ = z.shape
         
         # Apply linear layers and split heads.
-        combined_values = self.word_fc_layers(x).view(n_batch, H, W, 3, self.n_head, self.d_k).contiguous()
+        query = self.query_fc_layer(x).view(n_batch, H, W, self.n_head, self.d_k).contiguous().permute(0, 3, 1, 2, 4)
+        combined_values = self.key_value_fc_layers(z).view(n_batch, _H, _W, 2, self.n_head, self.d_k).contiguous()
         combined_values = combined_values.permute(3, 0, 4, 1, 2, 5)
         
-        # Q, K, V : (n_batch, n_head, H, W, d_k)
-        query, key, value = combined_values[0], combined_values[1], combined_values[2]
+        # Q : (n_batch, n_head, H, W, d_k)
+        # K, V : (n_batch, n_head, _H, _W, d_k)
+        key, value = combined_values[0], combined_values[1]
         
         # Shift features in 4-class way.
-        query = functions.cyclic_shift(query, self.shift_size)
-        key = functions.cyclic_shift(key, self.shift_size)
-        value = functions.cyclic_shift(value, self.shift_size)
+        query = functions.cyclic_shift(query, self.query_config['shift_size'])
+        key = functions.cyclic_shift(key, self.key_config['shift_size'])
+        value = functions.cyclic_shift(value, self.key_config['shift_size'])
 
         # Partition windows.
         # Q, K, V : (n_batch, n_head, nh, nw, window_size^2, d_k)
-        query = functions.partition_window(query, self.window_size, self.nh, self.nw)
-        key = functions.partition_window(key, self.window_size, self.nh, self.nw)
-        value = functions.partition_window(value, self.window_size, self.nh, self.nw)
+        query = functions.partition_window(query, self.query_config['window_size'], self.query_config['nh'], self.query_config['nw'])
+        key = functions.partition_window(key, self.key_config['window_size'], self.key_config['nh'], self.key_config['nw'])
+        value = functions.partition_window(value, self.key_config['window_size'], self.key_config['nh'], self.key_config['nw'])
         
         # Compute attention score.
         scores = torch.matmul(query, key.transpose(-1, -2)) * self.scale
@@ -139,7 +156,7 @@ class MultiHeadAttentionLayer(nn.Module):
         # Add relative position embedding.
         if self.relative_position_embedding:
             position_embedding = self.relative_position_embedding_table[self.relative_position_index].view(
-                self.window_size_sq, self.window_size_sq, -1)
+                self.query_config['window_size_sq'], self.key_config['window_size_sq'], -1)
             position_embedding = position_embedding.permute(2, 0, 1).contiguous()[None, :, None, None, ...]
             scores = scores + position_embedding
         
@@ -151,17 +168,37 @@ class MultiHeadAttentionLayer(nn.Module):
         attention = torch.matmul(scores, value)
         
         # Merge windows.
-        attention = functions.merge_window(attention, self.window_size)  # (n_batch, n_head, H, W, d_k)
+        attention = functions.merge_window(attention, self.query_config['window_size'])  # (n_batch, n_head, H, W, d_k)
         
         # Shift features reversely.
-        attention = functions.cyclic_shift(attention, -self.shift_size)
+        attention = functions.cyclic_shift(attention, -self.query_config['shift_size'])
         
         # Concatenate heads and output features.
         attention = attention.permute(0, 2, 3, 1, 4).contiguous().view(n_batch, H, W, -1)
         return self.output_fc_layer(attention)
+    
+    
+# Multi-head SELF-attention layer
+class MultiHeadSelfAttentionLayer(MultiHeadAttentionLayer):
+    def __init__(self, d_embed, n_head, height, width, window_size, relative_position_embedding=True):
+        super(MultiHeadSelfAttentionLayer, self).__init__(d_embed, n_head,
+                                                          height, width, window_size,
+                                                          height, width, window_size,
+                                                          relative_position_embedding)
+
+    def forward(self, x):
+        """
+        <input>
+            x : (n_batch, H, W, d_embed)
+            
+        <output>
+            attention : (n_batch, H, W, d_embed)
+        """
+        return super(MultiHeadSelfAttentionLayer, self).forward(x, x)
 
     
     
+# Position-wise FF layer
 class PositionWiseFeedForwardLayer(nn.Module):
     def __init__(self, d_embed, d_ff, dropout=0.1):
         super(PositionWiseFeedForwardLayer, self).__init__()
@@ -221,14 +258,14 @@ class AbsolutePositionEmbedding(nn.Module):
     
 
 # Get a transformer encoder with its parameters.
-def get_transformer_encoder(d_embed=256,
+def get_transformer_encoder(d_embed=128,
                             positional_encoding=None,
                             relative_position_embedding=True,
-                            n_layer=6,
+                            n_layer=12,
                             n_head=4,
-                            d_ff=1024,
+                            d_ff=512,
                             n_patch=28,
-                            window_size=7,
+                            window_size=4,
                             dropout=0.1):
     
     if positional_encoding == 'Sinusoidal' or positional_encoding == 'sinusoidal' or positional_encoding == 'sin':
@@ -238,7 +275,7 @@ def get_transformer_encoder(d_embed=256,
     elif positional_encoding == None or positional_encoding == 'None':
         positional_encoding_layer = None
     
-    attention_layer = MultiHeadAttentionLayer(d_embed, n_head, n_patch, n_patch, window_size, relative_position_embedding)
+    attention_layer = MultiHeadSelfAttentionLayer(d_embed, n_head, n_patch, n_patch, window_size, relative_position_embedding)
     feed_forward_layer = PositionWiseFeedForwardLayer(d_embed, d_ff, dropout)
     norm_layer = nn.LayerNorm(d_embed, eps=1e-6)
     encoder_layer = EncoderLayer(attention_layer, feed_forward_layer, norm_layer, dropout)
@@ -263,7 +300,7 @@ class TransformerDecoder(nn.Module):
         """
         <input>
             x : (n_batch, H, W, d_embed), input query
-            z : (n_batch, H, W, d_embed), encoder output
+            z : (n_batch, _H, _W, d_embed), encoder output
         """
         if self.positional_encoding:
             out = self.positional_encoding_layer(x)
@@ -307,7 +344,7 @@ class DecoderLayer(nn.Module):
         """
         <input>
             x : (n_batch, H, W, d_embed), input query
-            z : (n_batch, H, W, d_embed), encoder output
+            z : (n_batch, _H, _W, d_embed), encoder output
         """
         # Self-attention module
         out1 = self.norm_layers[0](x)  # Layer norm first
