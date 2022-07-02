@@ -104,26 +104,40 @@ def masking_matrix(n_head, H, W, window_size, shift_size,
 
 
 # Indices for 2D relative position bias for windows
-def relative_position_index(window_size):
+def relative_position_index(window_size, key_window_size=None):
     """
     <input>
         window_size : (int)
+        (optional) key_window_size : (int) when key != query
         
     <return>
-        relative_coord : (window_size^4, )
+        relative_coord : (window_size^4, ) or (window_size^2 * key_window_size^2, )
     """
-    axis_size = window_size * 2 - 1  # Number of possible positions along an axis
+    # Ratio of query to key
+    if key_window_size == None:
+        qk_ratio = 1
+    else:
+        assert window_size % key_window_size == 0
+        qk_ratio = window_size // key_window_size
+    
+    axis_size = window_size * 2 - qk_ratio  # Number of possible positions along an axis
     
     # Coordinate indices along each axis
-    coord_x = np.repeat(np.arange(window_size) * axis_size, window_size)
-    coord_y = np.tile(np.arange(window_size), window_size)
-    
+    query_coord_x = np.repeat(np.arange(window_size) * axis_size, window_size)
+    query_coord_y = np.tile(np.arange(window_size), window_size)
+    if key_window_size == None:
+        key_coord_x = query_coord_x
+        key_coord_y = query_coord_y
+    else:
+        key_coord_x = np.repeat(np.arange(key_window_size) * axis_size * qk_ratio, key_window_size)
+        key_coord_y = np.tile(np.arange(key_window_size) * qk_ratio, key_window_size)
+        
     # Relative coordinate indices along each axis
-    relative_x = coord_x[:, np.newaxis] - coord_x
-    relative_y = coord_y[:, np.newaxis] - coord_y
+    relative_x = query_coord_x[:, np.newaxis] - key_coord_x
+    relative_y = query_coord_y[:, np.newaxis] - key_coord_y
     
     # Relative coordinate indices in 2D window
     relative_coord = relative_x + relative_y
-    relative_coord += relative_coord[-1, 0]
+    relative_coord -= relative_coord[0, -1]
     
     return relative_coord.flatten()
