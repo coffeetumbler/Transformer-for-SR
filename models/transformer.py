@@ -321,7 +321,7 @@ class DecoderLayer(nn.Module):
         self.self_attention_layer = self_attention_layer
         self.attention_layer = attention_layer
         self.feed_forward_layer = feed_forward_layer
-        self.norm_layers = functions.clone_layer(norm_layer, 3)
+        self.norm_layers = functions.clone_layer(norm_layer, 4)
         self.dropout_layer = nn.Dropout(p=dropout)
         
         for p in self.self_attention_layer.parameters():
@@ -353,10 +353,10 @@ class DecoderLayer(nn.Module):
         
         # Attention module
         out2 = self.norm_layers[1](out1)
-        out2 = self.attention_layer(out2, z)
+        out2 = self.attention_layer(out2, self.norm_layers[2](z))  # Layer norm for z is applied.
         out2 = self.dropout_layer(out2) + out1
         
-        out3 = self.norm_layers[2](out2)
+        out3 = self.norm_layers[3](out2)
         out3 = self.feed_forward_layer(out3)
         return self.dropout_layer(out3) + out2
     
