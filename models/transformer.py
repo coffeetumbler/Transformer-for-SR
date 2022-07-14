@@ -28,14 +28,12 @@ class TransformerEncoder(nn.Module):
             x : (n_batch, H, W, d_embed)
         """
         if self.positional_encoding:
-            out = self.positional_encoding_layer(x)
-        else:
-            out = x
+            x = self.positional_encoding_layer(x)
 
         for layer in self.encoder_layers:
-            out = layer(out)
+            x = layer(x)
 
-        return out
+        return x
     
     
 # Encoder layer
@@ -63,13 +61,13 @@ class EncoderLayer(nn.Module):
         <input>
             x : (n_batch, H, W, d_embed)
         """
-        out1 = self.norm_layers[0](x)  # Layer norm first
-        out1 = self.attention_layer(out1)
-        out1 = self.dropout_layer(out1) + x
+        out = self.norm_layers[0](x)  # Layer norm first
+        out = self.attention_layer(out)
+        x = self.dropout_layer(out) + x
         
-        out2 = self.norm_layers[1](out1)
-        out2 = self.feed_forward_layer(out2)
-        return self.dropout_layer(out2) + out1
+        out = self.norm_layers[1](x)
+        out = self.feed_forward_layer(out)
+        return self.dropout_layer(out) + x
     
     
     
@@ -151,31 +149,31 @@ class MultiHeadAttentionLayer(nn.Module):
         value = functions.partition_window(value, self.key_config['window_size'], self.key_config['nh'], self.key_config['nw'])
         
         # Compute attention score.
-        scores = torch.matmul(query, key.transpose(-1, -2)) * self.scale
+        x = torch.matmul(query, key.transpose(-1, -2)) * self.scale
         
         # Add relative position embedding.
         if self.relative_position_embedding:
             position_embedding = self.relative_position_embedding_table[self.relative_position_index].view(
                 self.query_config['window_size_sq'], self.key_config['window_size_sq'], -1)
             position_embedding = position_embedding.permute(2, 0, 1).contiguous()[None, :, None, None, ...]
-            scores = scores + position_embedding
+            x = x + position_embedding
         
         # Add masking matrix.
-        scores.masked_fill_(self.mask, -1e9)
+        x.masked_fill_(self.mask, -1e9)
 
         # Compute attention probability and values.
-        scores = self.softmax(scores)
-        attention = torch.matmul(scores, value)
+        x = self.softmax(x)
+        x = torch.matmul(x, value)
         
         # Merge windows.
-        attention = functions.merge_window(attention, self.query_config['window_size'])  # (n_batch, n_head, H, W, d_k)
+        x = functions.merge_window(x, self.query_config['window_size'])  # (n_batch, n_head, H, W, d_k)
         
         # Shift features reversely.
-        attention = functions.cyclic_shift(attention, -self.query_config['shift_size'])
+        x = functions.cyclic_shift(x, -self.query_config['shift_size'])
         
         # Concatenate heads and output features.
-        attention = attention.permute(0, 2, 3, 1, 4).contiguous().view(n_batch, H, W, -1)
-        return self.output_fc_layer(attention)
+        x = x.permute(0, 2, 3, 1, 4).contiguous().view(n_batch, H, W, -1)
+        return self.output_fc_layer(x)
     
     
 # Multi-head SELF-attention layer
@@ -208,9 +206,9 @@ class PositionWiseFeedForwardLayer(nn.Module):
         self.dropout_layer = nn.Dropout(p=dropout)
 
     def forward(self, x):
-        out = self.first_fc_layer(x)
-        out = self.dropout_layer(self.activation_layer(out))
-        return self.second_fc_layer(out)
+        x = self.first_fc_layer(x)
+        x = self.dropout_layer(self.activation_layer(x))
+        return self.second_fc_layer(x)
     
     
     
@@ -303,14 +301,12 @@ class TransformerDecoder(nn.Module):
             z : (n_batch, _H, _W, d_embed), encoder output
         """
         if self.positional_encoding:
-            out = self.positional_encoding_layer(x)
-        else:
-            out = x
+            x = self.positional_encoding_layer(x)
 
         for layer in self.decoder_layers:
-            out = layer(out, z)
+            x = layer(x, z)
 
-        return out
+        return x
     
     
     
@@ -347,18 +343,18 @@ class DecoderLayer(nn.Module):
             z : (n_batch, _H, _W, d_embed), encoder output
         """
         # Self-attention module
-        out1 = self.norm_layers[0](x)  # Layer norm first
-        out1 = self.self_attention_layer(out1)
-        out1 = self.dropout_layer(out1) + x
+        out = self.norm_layers[0](x)  # Layer norm first
+        out = self.self_attention_layer(out)
+        x = self.dropout_layer(out) + x
         
         # Attention module
-        out2 = self.norm_layers[1](out1)
-        out2 = self.attention_layer(out2, self.norm_layers[2](z))  # Layer norm for z is applied.
-        out2 = self.dropout_layer(out2) + out1
+        out = self.norm_layers[1](x)
+        out = self.attention_layer(out, self.norm_layers[2](z))  # Layer norm for z is applied.
+        x = self.dropout_layer(out) + x
         
-        out3 = self.norm_layers[3](out2)
-        out3 = self.feed_forward_layer(out3)
-        return self.dropout_layer(out3) + out2
+        out = self.norm_layers[3](x)
+        out = self.feed_forward_layer(out)
+        return self.dropout_layer(out) + x
     
     
     

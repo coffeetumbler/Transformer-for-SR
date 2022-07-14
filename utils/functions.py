@@ -25,8 +25,7 @@ def partition_window(x, window_size, nh, nw):
     """
     n_batch, n_head, H, W, C = x.shape
     x = x.view(n_batch, n_head, nh, window_size, nw, window_size, C)
-    windows = x.transpose(3, 4).contiguous().view(n_batch, n_head, nh, nw, window_size*window_size, C)
-    return windows
+    return x.transpose(3, 4).contiguous().view(n_batch, n_head, nh, nw, window_size*window_size, C)
 
 
 # Merge windows of splited heads.
@@ -53,11 +52,11 @@ def cyclic_shift(x, shift_size):
         shift_size : (int)
     """
     n_batch, n_head, H, W, C = x.shape
-    x_ = x.view(n_batch, 4, n_head // 4, H, W, C).transpose(0, 1).contiguous()
-    x_1 = torch.roll(x_[1], shifts=shift_size, dims=-2)
-    x_2 = torch.roll(x_[2], shifts=shift_size, dims=-3)
-    x_3 = torch.roll(x_[3], shifts=(shift_size, shift_size), dims=(-2, -3))
-    return torch.stack([x_[0], x_1, x_2, x_3]).transpose(0, 1).contiguous().view(n_batch, n_head, H, W, C)
+    x = x.view(n_batch, 4, n_head // 4, H, W, C).transpose(0, 1).contiguous()
+    x_1 = torch.roll(x[1], shifts=shift_size, dims=-2)
+    x_2 = torch.roll(x[2], shifts=shift_size, dims=-3)
+    x_3 = torch.roll(x[3], shifts=(shift_size, shift_size), dims=(-2, -3))
+    return torch.stack([x[0], x_1, x_2, x_3]).transpose(0, 1).contiguous().view(n_batch, n_head, H, W, C)
 
 
 # Make masking matrix for 4-class split heads.
