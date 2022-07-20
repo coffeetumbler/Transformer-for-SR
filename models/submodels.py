@@ -56,3 +56,29 @@ class ReconstructionBlock(nn.Module):
         x = self.dropout_layer(self.activation_layer(x))
         x = self.fc_layer2(x).view(n_batch, H, W, 3, self.patch_size, self.patch_size).permute(0, 3, 1, 4, 2, 5)
         return x.contiguous().view(n_batch, 3, H*self.patch_size, W*self.patch_size)
+    
+    
+    
+# Upsampling layer
+class UpsamplingLayer(nn.Module):
+    def __init__(self, upscale=2, d_embed=128):
+        super(UpsamplingLayer, self).__init__()
+        self.upscale = upscale
+        self.d_embed = d_embed
+        self.linear_layer = nn.Linear(d_embed, d_embed*upscale*upscale)
+        
+        nn.init.xavier_uniform_(self.linear_layer.weight)
+        nn.init.zeros_(self.linear_layer.bias)
+        
+    def forward(self, x):
+        """
+        <input>
+            x : (n_batch, H, W, d_embed)
+            
+        <output>
+            x : (n_batch, H*upscale, W*upscale, d_embed)
+        """
+        n_batch, H, W, _ = x.shape
+        
+        x = self.linear_layer(x).view(n_batch, H, W, self.upscale, self.upscale, self.d_embed).transpose(2, 3)
+        return x.contiguous().view(n_batch, H*self.upscale, W*self.upscale, self.d_embed)
