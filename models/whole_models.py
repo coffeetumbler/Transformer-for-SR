@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 from models.transformer import get_transformer_encoder, get_transformer_decoder
-from models.submodels import EmbeddingLayer, ReconstructionBlock
+from models.submodels import EmbeddingLayer, ReconstructionBlock, UpsamplingLayer
 
 
 
@@ -35,9 +35,8 @@ class SRTransformer(nn.Module):
         encoder_n_patch = lr_img_res // patch_size
         decoder_n_patch = encoder_n_patch * upscale
         
-        # embedding layers and reconstruction block
+        # encoder embedding layer and reconstruction block
         self.encoder_embedding_layer = EmbeddingLayer(patch_size, d_embed)
-        self.decoder_embedding_layer = EmbeddingLayer(patch_size, d_embed)
         self.reconstruction_block = ReconstructionBlock(patch_size, d_embed, d_embed*4, dropout)
         
         # encoder
@@ -51,8 +50,9 @@ class SRTransformer(nn.Module):
                                                            window_size=window_size,
                                                            dropout=dropout)
 
-        # decoder
+        # decoder and decoder embedding layer
         if upscale > 1 and upscale < 4:
+            self.decoder_embedding_layer = EmbeddingLayer(patch_size, d_embed)
             self.transformer_decoder = get_transformer_decoder(d_embed=d_embed,
                                                                positional_encoding=None,
                                                                relative_position_embedding=True,
@@ -64,8 +64,46 @@ class SRTransformer(nn.Module):
                                                                key_n_patch=encoder_n_patch,
                                                                key_window_size=window_size,
                                                                dropout=dropout)
+            
         elif upscale == 4:
-            """Need to be filled."""
+            self.decoder_embedding_layer = EmbeddingLayer(patch_size*2, d_embed)
+            
+            # x2 upscale
+            self.transformer_decoder_1 = get_transformer_decoder(d_embed=d_embed,
+                                                                 positional_encoding=None,
+                                                                 relative_position_embedding=True,
+                                                                 n_layer=decoder_n_layer//2,
+                                                                 n_head=n_head,
+                                                                 d_ff=d_embed*4,
+                                                                 query_n_patch=decoder_n_patch//2,
+                                                                 query_window_size=window_size*2,
+                                                                 key_n_patch=encoder_n_patch,
+                                                                 key_window_size=window_size,
+                                                                 dropout=dropout)
+            # x2 upscale
+            self.transformer_decoder_2 = get_transformer_decoder(d_embed=d_embed,
+                                                                 positional_encoding=None,
+                                                                 relative_position_embedding=True,
+                                                                 n_layer=decoder_n_layer//2,
+                                                                 n_head=n_head,
+                                                                 d_ff=d_embed*4,
+                                                                 query_n_patch=decoder_n_patch,
+                                                                 query_window_size=window_size*2,
+                                                                 key_n_patch=encoder_n_patch,
+                                                                 key_window_size=window_size//2,
+                                                                 dropout=dropout)
+            # upsampling
+            self.upsampling = UpsamplingLayer(upscale=2, d_embed=d_embed)
+            
+            # x4 upscale
+            self.transformer_decoder = self.forward_upscale_4
+            
+    # Forward for x4 upscaling decoder
+    def forward_upscale_4(self, decoder_query, encoder_output):
+        decoder_query = self.transformer_decoder_1(decoder_query, encoder_output)
+        decoder_query = self.upsampling(decoder_query)
+        return self.transformer_decoder_2(decoder_query, encoder_output)
+    
         
     def forward(self, lr_img, lr_img_upscaled):
         """
