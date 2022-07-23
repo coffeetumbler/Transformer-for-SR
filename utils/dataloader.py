@@ -11,44 +11,56 @@ from torchvision.transforms import Normalize
 
 class dataset_SR(Dataset):
     def __init__(self,
+                setting = "train",
+                augmentation = True,
                 SR_mode = 2,
-                flip=0.5, 
-                rotation = [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE],
-                degradation = [cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_CUBIC, cv2.INTER_LANCZOS4], 
-                channel_wise_noise = True, 
-                normalization = True,
-                data='DIV2K',
-                setting = "train"):
+                data='DIV2K'
+                ):
         super(dataset_SR, self).__init__()
         self.SR_mode = SR_mode
-        self.flip = flip
-        self.rotation = rotation
         self.data = data
-        self.degradation = degradation
-        self.channel_wise_noise = channel_wise_noise
-        self.normalization = normalization
         self.setting = setting
-        self.mode_path = {"train" : '/home/lahj91/SR/SR_training_datasets', "val" : '/home/lahj91/SR/SR_testing_datasets'}
+        # if self.setting == 'val':
+        #     self.setting = 'test'
+        self.augmentation = augmentation
+        self.flip = 0.5
+        self.rotation = [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE]
+        self.degradation = [cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_CUBIC, cv2.INTER_LANCZOS4]
+        self.channel_wise_noise = True
+        self.mode_path = {"train" : '/home/lahj91/SR/SR_training_datasets', "test" : '/home/lahj91/SR/SR_testing_datasets'}
         self.data_name_list = pd.read_csv('./DataName/' + self.setting + "_" + self.data + ".csv")
         self.normalize_img = Normalize(mean=[0.406, 0.456, 0.485], std=[0.225, 0.224, 0.229])
+        self.prefix = self.mode_path[self.setting]+ '/'+ self.data + '/'
+
     def __len__(self):
         return len(self.data_name_list)
+
     def __getitem__(self, idx):
-        view_path = self.mode_path[self.setting]+ '/'+ self.data + '/' + self.data_name_list.iloc[idx]['name']
+        view_path = self.prefix + self.data_name_list.iloc[idx]['name']
         origin = cv2.imread(view_path, cv2.IMREAD_UNCHANGED)
         p, q = random.randint(0, origin.shape[0]-self.SR_mode*48), random.randint(0, origin.shape[1]-self.SR_mode*48)
         origin = origin[p:p+self.SR_mode*48,  q:q+self.SR_mode*48] #random crop(96*96)으로 origin data 생성
-        if self.channel_wise_noise: #channel-wise noise
-            pn = np.random.uniform(*[1 - 0.4, 1 + 0.4], size=(3))
-            origin = np.minimum(255., np.maximum(0., origin * pn[np.newaxis, np.newaxis, :]))
-        if random.random() < self.flip: #좌우반전
-            origin = cv2.flip(origin, 1)
-        if self.rotation != False: #rotation
-            rd = random.random()
-            if rd < 3/4:
-                origin = cv2.rotate(origin, random.choice(self.rotation))
-            else:
-                origin = origin
-        degraded = cv2.resize(origin, dsize=(int(self.SR_mode*24),int(self.SR_mode*24)), fx=0.5, fy=0.5, interpolation=random.choice(self.degradation)) 
-        interpolated = cv2.resize(degraded, dsize=(self.SR_mode*48,self.SR_mode*48), fx=0.5, fy=0.5, interpolation=cv2.INTER_CUBIC) #bicubic으로 degraded를 96*96 size 복원
-        return torch.from_numpy(origin.transpose(2,0,1))/255, self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1))/255), self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1))/255)
+        if self.augmentation:
+            if self.channel_wise_noise: #channel-wise noise
+                pn = np.random.uniform(*[1 - 0.4, 1 + 0.4], size=(3))
+                origin = np.minimum(255., np.maximum(0., origin * pn[np.newaxis, np.newaxis, :]))
+            if random.random() < self.flip: #좌우반전
+                origin = cv2.flip(origin, 1)
+            if self.rotation != False: #rotation
+                rd = random.random()
+                if rd < 3/4:
+                    origin = cv2.rotate(origin, random.choice(self.rotation))
+            degraded = cv2.resize(origin, dsize=(48,48), interpolation=random.choice(self.degradation)) 
+        else:
+            degraded = cv2.resize(origin, dsize=(48,48), interpolation=cv2.INTER_CUBIC)
+        interpolated = cv2.resize(degraded, dsize=(self.SR_mode*48,self.SR_mode*48), interpolation=cv2.INTER_CUBIC) #bicubic으로 degraded를 96*96 size 복원 fx=0.5, fy=0.5,
+        items = {"origin" : torch.from_numpy(origin.transpose(2,0,1))/255, "degraded" : self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1))/255), "interpolated" : self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1))/255)}
+        return items
+
+def get_dataloader(batch_size=16, setting='train', augmentation=True, pin_memory=True, **kwargs):
+    if setting == 'train':
+        augmentation = True
+    elif setting == 'test':
+        augmentation = False
+    dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
+    return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory)
