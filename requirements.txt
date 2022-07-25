@@ -1,3 +1,7 @@
 numpy
+pandas
 torch==1.9.0
 timm
+opencv-python
+tqdm
+easydict
