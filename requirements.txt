@@ -1,0 +1,6 @@
+numpy
+pandas
+timm
+opencv-python
+tqdm
+easydict
