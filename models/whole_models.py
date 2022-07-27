@@ -5,6 +5,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.transformer import get_transformer_encoder, get_transformer_decoder
 from models.submodels import EmbeddingLayer, ReconstructionBlock, UpsamplingLayer
@@ -17,6 +18,7 @@ class SRTransformer(nn.Module):
     Args:
         lr_img_res : size of low-resolution image
         upscale : upscaling factor, 2 to 4
+        intermediate_upscale : boolean for intermediate upscaling when upscale==4
         patch_size : size of image patch
         window_size : size of window
         d_embed : embedding dimension
@@ -25,8 +27,9 @@ class SRTransformer(nn.Module):
         n_head : number of heads in self-attention module
         dropout : dropout ratio
     """
-    def __init__(self, lr_img_res=48, upscale=2, patch_size=2, window_size=4, d_embed=128,
-                 encoder_n_layer=12, decoder_n_layer=12, n_head=4, dropout=0.1):
+    def __init__(self, lr_img_res=48, upscale=2, intermediate_upscale=False,
+                       patch_size=2, window_size=4, d_embed=128,
+                       encoder_n_layer=12, decoder_n_layer=12, n_head=4, dropout=0.1):
         super(SRTransformer, self).__init__()
         assert lr_img_res % (patch_size * window_size) == 0
         assert d_embed % n_head == 0
@@ -66,44 +69,26 @@ class SRTransformer(nn.Module):
                                                                dropout=dropout)
             
         elif upscale == 4:
-            self.decoder_embedding_layer = EmbeddingLayer(patch_size*2, d_embed)
-            
-            # x2 upscale
-            self.transformer_decoder_1 = get_transformer_decoder(d_embed=d_embed,
-                                                                 positional_encoding=None,
-                                                                 relative_position_embedding=True,
-                                                                 n_layer=decoder_n_layer//2,
-                                                                 n_head=n_head,
-                                                                 d_ff=d_embed*4,
-                                                                 query_n_patch=decoder_n_patch//2,
-                                                                 query_window_size=window_size*2,
-                                                                 key_n_patch=encoder_n_patch,
-                                                                 key_window_size=window_size,
-                                                                 dropout=dropout)
-            # x2 upscale
-            self.transformer_decoder_2 = get_transformer_decoder(d_embed=d_embed,
-                                                                 positional_encoding=None,
-                                                                 relative_position_embedding=True,
-                                                                 n_layer=decoder_n_layer//2,
-                                                                 n_head=n_head,
-                                                                 d_ff=d_embed*4,
-                                                                 query_n_patch=decoder_n_patch,
-                                                                 query_window_size=window_size*2,
-                                                                 key_n_patch=encoder_n_patch,
-                                                                 key_window_size=window_size//2,
-                                                                 dropout=dropout)
-            # upsampling
-            self.upsampling = UpsamplingLayer(upscale=2, d_embed=d_embed)
-            
-            # x4 upscale
-            self.transformer_decoder = self.forward_upscale_4
-            
-    # Forward for x4 upscaling decoder
-    def forward_upscale_4(self, decoder_query, encoder_output):
-        decoder_query = self.transformer_decoder_1(decoder_query, encoder_output)
-        decoder_query = self.upsampling(decoder_query)
-        return self.transformer_decoder_2(decoder_query, encoder_output)
-    
+            self.intermediate_upscale = intermediate_upscale
+            # two-stage decoder
+            if intermediate_upscale:
+                self.decoder_embedding_layer = EmbeddingLayer(patch_size, d_embed)
+                self.transformer_decoder = TwoStageDecoder(patch_size=patch_size,
+                                                           window_size=window_size,
+                                                           d_embed=d_embed,
+                                                           n_layer=decoder_n_layer,
+                                                           n_head=n_head,
+                                                           encoder_n_patch=encoder_n_patch,
+                                                           dropout=dropout)
+            # one-stage decoder
+            else:
+                self.decoder_embedding_layer = EmbeddingLayer(patch_size*2, d_embed)
+                self.transformer_decoder = OneStageDecoder(window_size=window_size,
+                                                           d_embed=d_embed,
+                                                           n_layer=decoder_n_layer,
+                                                           n_head=n_head,
+                                                           encoder_n_patch=encoder_n_patch,
+                                                           dropout=dropout)
         
     def forward(self, lr_img, lr_img_upscaled):
         """
@@ -120,5 +105,116 @@ class SRTransformer(nn.Module):
         
         # Make high-resolution image
         out = self.decoder_embedding_layer(lr_img_upscaled)
-        out = self.transformer_decoder(out, lr_img)
+        if self.intermediate_upscale:
+            out, lr_img_upscaled = self.transformer_decoder(out, lr_img, lr_img_upscaled)
+        else:
+            out = self.transformer_decoder(out, lr_img)
         return lr_img_upscaled + self.reconstruction_block(out)
+    
+    
+
+# One-stage decoder
+class OneStageDecoder(nn.Module):
+    """
+    Args:
+        window_size : size of window
+        d_embed : embedding dimension
+        n_layer : number of layers in decoder
+        n_head : number of heads in self-attention module
+        encoder_n_patch : number of patches along an axis in encoder
+        dropout : dropout ratio
+    """
+    def __init__(self, window_size, d_embed, n_layer,
+                       n_head, encoder_n_patch, dropout):
+        super(OneStageDecoder, self).__init__()
+        
+        # x2 upscale
+        self.transformer_decoder_1 = get_transformer_decoder(d_embed=d_embed,
+                                                             positional_encoding=None,
+                                                             relative_position_embedding=True,
+                                                             n_layer=n_layer//2,
+                                                             n_head=n_head,
+                                                             d_ff=d_embed*4,
+                                                             query_n_patch=encoder_n_patch*2,
+                                                             query_window_size=window_size*2,
+                                                             key_n_patch=encoder_n_patch,
+                                                             key_window_size=window_size,
+                                                             dropout=dropout)
+        # x2 upscale
+        self.transformer_decoder_2 = get_transformer_decoder(d_embed=d_embed,
+                                                             positional_encoding=None,
+                                                             relative_position_embedding=True,
+                                                             n_layer=n_layer//2,
+                                                             n_head=n_head,
+                                                             d_ff=d_embed*4,
+                                                             query_n_patch=encoder_n_patch*4,
+                                                             query_window_size=window_size*2,
+                                                             key_n_patch=encoder_n_patch,
+                                                             key_window_size=window_size//2,
+                                                             dropout=dropout)
+        # upsampling
+        self.upsampling = UpsamplingLayer(upscale=2, d_embed=d_embed)
+        
+    def forward(self, x, z):
+        x = self.transformer_decoder_1(x, z)
+        x = self.upsampling(x)
+        return self.transformer_decoder_2(x, z)
+    
+    
+# Two-stage decoder
+class TwoStageDecoder(nn.Module):
+    """
+    Args:
+        patch_size : size of image patch
+        window_size : size of window
+        d_embed : embedding dimension
+        n_layer : number of layers in decoder
+        n_head : number of heads in self-attention module
+        encoder_n_patch : number of patches along an axis in encoder
+        dropout : dropout ratio
+    """
+    def __init__(self, patch_size, window_size, d_embed,
+                       n_layer, n_head, encoder_n_patch, dropout):
+        super(TwoStageDecoder, self).__init__()
+        
+        # x2 upscale
+        self.transformer_decoder_1 = get_transformer_decoder(d_embed=d_embed,
+                                                             positional_encoding=None,
+                                                             relative_position_embedding=True,
+                                                             n_layer=n_layer//2,
+                                                             n_head=n_head,
+                                                             d_ff=d_embed*4,
+                                                             query_n_patch=encoder_n_patch*2,
+                                                             query_window_size=window_size*2,
+                                                             key_n_patch=encoder_n_patch,
+                                                             key_window_size=window_size,
+                                                             dropout=dropout)
+        # x2 upscale
+        self.transformer_decoder_2 = get_transformer_decoder(d_embed=d_embed,
+                                                             positional_encoding=None,
+                                                             relative_position_embedding=True,
+                                                             n_layer=n_layer//2,
+                                                             n_head=n_head,
+                                                             d_ff=d_embed*4,
+                                                             query_n_patch=encoder_n_patch*4,
+                                                             query_window_size=window_size*2,
+                                                             key_n_patch=encoder_n_patch,
+                                                             key_window_size=window_size//2,
+                                                             dropout=dropout)
+        
+        # intermediate reconstruction and embedding layers
+        self.reconstruction_block = ReconstructionBlock(patch_size, d_embed, d_embed*4, dropout)
+        self.upsampling = lambda x : F.interpolate(x, scale_factor=2, mode='bicubic', align_corners=True)
+        self.embedding_layer = EmbeddingLayer(patch_size, d_embed)
+        
+    def forward(self, x, z, origin_img):
+        # Coarse decoding
+        x = self.transformer_decoder_1(x, z)
+        
+        # Reconstruct intermediate images and upsample them.
+        origin_img = self.reconstruction_block(x) + origin_img
+        origin_img = self.upsampling(origin_img)
+        
+        # Embedding and fine decoding
+        x = self.embedding_layer(origin_img)
+        return self.transformer_decoder_2(x, z), origin_img
