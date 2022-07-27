@@ -3,7 +3,7 @@ import numpy as np
 import random
 import cv2
 import pandas as pd
-
+import config
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
@@ -14,30 +14,46 @@ class dataset_SR(Dataset):
                 setting = "train",
                 augmentation = True,
                 SR_mode = 2,
-                data='DIV2K'
+                data='DIV2K',
+                data_merge = False
                 ):
         super(dataset_SR, self).__init__()
         self.SR_mode = SR_mode
         self.data = data
         self.setting = setting
-        # if self.setting == 'val':
-        #     self.setting = 'test'
         self.augmentation = augmentation
         self.flip = 0.5
         self.rotation = [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE]
         self.degradation = [cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_CUBIC, cv2.INTER_LANCZOS4]
         self.channel_wise_noise = True
-        self.mode_path = {"train" : '/home/lahj91/SR/SR_training_datasets', "test" : '/home/lahj91/SR/SR_testing_datasets'}
-        self.data_name_list = pd.read_csv('./DataName/' + self.setting + "_" + self.data + ".csv")
+        self.MODE_PATH = config.MODE_PATH
         self.normalize_img = Normalize(mean=[0.406, 0.456, 0.485], std=[0.225, 0.224, 0.229])
-        self.prefix = self.mode_path[self.setting]+ '/'+ self.data + '/'
+        self.prefix = self.MODE_PATH[self.setting]+ '/'+ self.data + '/'
+        self.data_merge = data_merge
+
+        if self.setting == "train":
+            self.DATA_LIST = config.TRAINING_DATA_LIST
+        elif self.setting == "test":
+            self.DATA_LIST = config.TEST_DATA_LIST
+        
+        if self.data_merge:
+            data_all = []
+            for i in self.DATA_LIST:
+                df = pd.read_csv('./DataName/' + self.setting + "_" + i + ".csv")
+                data_all.append(df)
+            self.data_name_list = pd.concat(data_all, axis=0, ignore_index=True)
+        else:
+            self.data_name_list = pd.read_csv('./DataName/' + self.setting + "_" + self.data + ".csv")
 
     def __len__(self):
         return len(self.data_name_list)
 
     def __getitem__(self, idx):
-        view_path = self.prefix + self.data_name_list.iloc[idx]['name']
-        origin = cv2.imread(view_path, cv2.IMREAD_UNCHANGED)
+        if self.data_merge:
+            view_path = self.MODE_PATH[self.setting]+ '/' + self.data_name_list.iloc[idx]['data'] + '/' + self.data_name_list.iloc[idx]['name']
+        else:
+            view_path = self.prefix + self.data_name_list.iloc[idx]['name']
+        origin = cv2.imread(view_path, cv2.IMREAD_UNCHANGED).copy()
         p, q = random.randint(0, origin.shape[0]-self.SR_mode*48), random.randint(0, origin.shape[1]-self.SR_mode*48)
         origin = origin[p:p+self.SR_mode*48,  q:q+self.SR_mode*48] #random crop(96*96)으로 origin data 생성
         if self.augmentation:
@@ -57,10 +73,12 @@ class dataset_SR(Dataset):
         items = {"origin" : torch.from_numpy(origin.transpose(2,0,1))/255, "degraded" : self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1))/255), "interpolated" : self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1))/255)}
         return items
 
-def get_dataloader(batch_size=16, setting='train', augmentation=True, pin_memory=True, **kwargs):
+def get_dataloader(batch_size=16, setting='train', augmentation=True, pin_memory=True, num_workers=0, **kwargs): #num_workers는 hyperparameter tunning의 영역
     if setting == 'train':
         augmentation = True
     elif setting == 'test':
         augmentation = False
+    elif setting == 'valid':
+        setting = 'test'
     dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
-    return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory)
+    return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory, num_workers=num_workers)
