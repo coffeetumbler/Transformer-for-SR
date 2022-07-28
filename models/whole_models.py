@@ -67,6 +67,7 @@ class SRTransformer(nn.Module):
                                                                key_n_patch=encoder_n_patch,
                                                                key_window_size=window_size,
                                                                dropout=dropout)
+            self.intermediate_upscale = False
             
         elif upscale == 4:
             self.intermediate_upscale = intermediate_upscale

@@ -14,7 +14,7 @@ DENORM_BIAS = torch.Tensor(config.IMG_NORM_MEAN).view(1, 3, 1, 1)
 PIXEL_MAX_VALUE = config.PIXEL_MAX_VALUE
 
 GRAY_COEF = torch.Tensor(config.GRAY_COEF).view(1, 3, 1, 1)
-_GRAY_COEF = GRAY_COEF / 256
+_GRAY_COEF = GRAY_COEF / PIXEL_MAX_VALUE
 GRAY_BIAS = config.GRAY_BIAS
 
 
