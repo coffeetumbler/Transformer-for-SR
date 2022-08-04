@@ -4,3 +4,5 @@ timm
 opencv-python
 tqdm
 easydict
+argparse
+json
