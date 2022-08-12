@@ -4,4 +4,4 @@ timm
 opencv-python
 tqdm
 tensorboard==2.6.0
-setuptools=59.5.0
+setuptools==59.5.0
