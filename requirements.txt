@@ -3,6 +3,5 @@ pandas
 timm
 opencv-python
 tqdm
-easydict
-argparse
-json
+tensorboard==2.6.0
+setuptools=59.5.0
