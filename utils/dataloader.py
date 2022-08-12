@@ -1,4 +1,7 @@
-import os
+import os, sys
+########EDIT BY TK
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+########
 import numpy as np
 import random
 import cv2
@@ -14,7 +17,7 @@ class dataset_SR(Dataset):
                 setting = "train",
                 augmentation = True,
                 SR_mode = 2,
-                data='DIV2K',
+                data="DIV2K",
                 data_merge = False
                 ):
         super(dataset_SR, self).__init__()
@@ -27,7 +30,7 @@ class dataset_SR(Dataset):
         self.degradation = [cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_CUBIC, cv2.INTER_LANCZOS4]
         self.channel_wise_noise = True
         self.MODE_PATH = config.MODE_PATH
-        self.normalize_img = Normalize(mean=[0.406, 0.456, 0.485], std=[0.225, 0.224, 0.229])
+        self.normalize_img = Normalize(config.IMG_NORM_MEAN, config.IMG_NORM_STD)
         self.prefix = self.MODE_PATH[self.setting]+ '/'+ self.data + '/'
         self.data_merge = data_merge
 
@@ -43,7 +46,10 @@ class dataset_SR(Dataset):
                 data_all.append(df)
             self.data_name_list = pd.concat(data_all, axis=0, ignore_index=True)
         else:
-            self.data_name_list = pd.read_csv('./DataName/' + self.setting + "_" + self.data + ".csv")
+            ########EDIT BY TK
+            A = os.path.dirname(os.path.abspath(__file__))
+            self.data_name_list = pd.read_csv(A+'/DataName/' + self.setting + "_" + self.data + ".csv")
+            ########
 
     def __len__(self):
         return len(self.data_name_list)
@@ -70,7 +76,9 @@ class dataset_SR(Dataset):
         else:
             degraded = cv2.resize(origin, dsize=(48,48), interpolation=cv2.INTER_CUBIC)
         interpolated = cv2.resize(degraded, dsize=(self.SR_mode*48,self.SR_mode*48), interpolation=cv2.INTER_CUBIC) #bicubic으로 degraded를 96*96 size 복원 fx=0.5, fy=0.5,
-        items = {"origin" : torch.from_numpy(origin.transpose(2,0,1))/255, "degraded" : self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1))/255), "interpolated" : self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1))/255)}
+       #########EDIT BY TK .float()
+        items = {"origin" : (torch.from_numpy(origin.transpose(2,0,1))/255).float(), "degraded" : self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1))/255).float(), "interpolated" : self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1))/255).float()}
+         #########
         return items
 
 def get_dataloader(batch_size=16, setting='train', augmentation=True, pin_memory=True, num_workers=0, **kwargs): #num_workers는 hyperparameter tunning의 영역

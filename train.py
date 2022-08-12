@@ -27,12 +27,12 @@ from utils import image_processing
 
 from tqdm import tqdm
 from timm.scheduler.cosine_lr import CosineLRScheduler
-import easydict
+#import easydict
 
 #Basic Setting : 임의로 정했습니다.
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu_id', type=int, default=0)
-parser.add_argument('--learning_rate', type=float, defualt='1e-4')
+parser.add_argument('--learning_rate', type=float, default='1e-4')
 parser.add_argument('--batch_size', type=int, default=16)
 parser.add_argument('--num_epochs', type=int, default=100)
 parser.add_argument('--loss', type=str, default='l1', help='l1/mse')
@@ -114,6 +114,8 @@ file.close()
 #GPU setting 
 cudnn.benchmark=True #input size stable -> Good
 device = torch.device('cuda:{}'.format(args.gpu_id) if torch.cuda.is_available() else 'cpu')
+#print(torch.cuda.current_device())
+#print(torch.cuda.device_count())
 
 #Model setting & save
 model = whole_models.SRTransformer(upscale=args.upscale).to(device)
@@ -126,21 +128,23 @@ elif args.loss == 'mse':
     criterion = nn.MSELoss().to(device)
 
 #optimizer : 임의로 정했습니다.
-optimizer = optim.AdamW(params = model.parameters(), lr=args.learing_rate, weight_decay = args.weight_decay)
+optimizer = optim.AdamW(params = model.parameters(), lr=args.learning_rate, weight_decay = args.weight_decay)
 
 #Dataset
 dataloader_train = get_dataloader(setting ="train", num_workers=4)
-train_size = len(dataloader_train)
+train_size = len(dataloader_train.dataset)
+#print(train_size_l)
+
 max_iter = (train_size//args.batch_size + 1) * args.num_epochs
 
 dataloader_val= get_dataloader(setting ="valid", num_workers=4)
-val_size = len(dataloader_val)
+val_size = len(dataloader_val.dataset)
 
 #scheduler : warmup + cosin lr decay : 임의로 정했습니다.
 scheduler = CosineLRScheduler(optimizer,
                             t_initial=max_iter,
-                            lr_min=args.learing_rate*0.01,
-                            warmup_lr_init=args.learing_rate*0.001,
+                            lr_min=args.learning_rate*0.01,
+                            warmup_lr_init=args.learning_rate*0.001,
                             warmup_t=max_iter//10,
                             cycle_limit=1,
                             t_in_epochs=False
@@ -163,21 +167,21 @@ for epoch in range(args.num_epochs):
     #Train
     model.train()
     
-    with tqdm(len(train_size)) as t:
+    with tqdm(train_size) as t:
         t.set_description('epoch : {}/{}'.format(epoch, args.num_epochs-1))
-
+        
         for batch, items in enumerate(dataloader_train) :
             n_batch = items['origin'].size()[0]
-
+            
             origin = items['origin'].to(device)
             degraded=items['degraded'].to(device)
             interpolated=items['interpolated'].to(device)
-
+            #print(origin.dtype, degraded.dtype, interpolated.dtype)
             mid_result=model(degraded, interpolated)
             mid_result=image_processing.denormalize(mid_result, device=device)
             loss = criterion(mid_result, origin)
 
-
+           
             optimizer.zero_grad()
             loss.backward()
 
@@ -188,11 +192,11 @@ for epoch in range(args.num_epochs):
             _iter+=1
             scheduler.step_update(_iter)
             t.update(n_batch)
-            
-            if batch %100 ==0:
-                loss, current=loss.item(), batch*n_batch
+             
+            if (batch+1) %25 ==0:
+                loss, current=loss.item(), (batch+1)*n_batch
                 tqdm.write(f"loss: {loss:>6f}, [{current:>5d}/{train_size:>5d}]")
-    
+        
     torch.save(model.state_dict(), os.path.join(save_path_state_dict+'state_dict_epoch_{}.pt'.format(epoch)))
     
     #Validate
@@ -210,7 +214,7 @@ for epoch in range(args.num_epochs):
             mid_result=image_processing.denormalize(mid_result, device=device)
             loss_val += PSNR(mid_result, origin).item()
         
-        loss_val/=val_size
+        loss_val/=(val_size)
 
         if loss_val <= min_valid_loss:
             min_valid_loss=loss_val
