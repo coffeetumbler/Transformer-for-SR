@@ -213,7 +213,7 @@ for epoch in range(args.num_epochs):
             optimizer.zero_grad()
             loss.backward()
 
-            nn.utils.clip_grad_norm(model.parameters(), args.grad_clip_norm)
+            nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm)
 
             optimizer.step()
             
