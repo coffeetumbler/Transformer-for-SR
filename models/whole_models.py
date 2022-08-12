@@ -69,7 +69,6 @@ class SRTransformer(nn.Module):
                                                                dropout=dropout)
             self.intermediate_upscale = False
             
-            
         elif upscale == 4:
             self.intermediate_upscale = intermediate_upscale
             # two-stage decoder

@@ -1,27 +1,31 @@
 import os, sys
-from signal import valid_signals
+# from signal import valid_signals
 import time
 #from pickletools import optimize
-sys.path.append(os.path.dirname(os.path.abspath('./train.ipynb')))
+# sys.path.append(os.path.dirname(os.path.abspath('./train.ipynb')))
+
 import numpy as np
-import random
+# import random
 import cv2
-import pandas as pd
+# import pandas as pd
 import torch
 from torch import nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
-import argparse
+from torch.utils.tensorboard import SummaryWriter
+
+# import argparse
 import json
 
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
+# from torch.utils.data import Dataset
+# from torch.utils.data import DataLoader
 
-from models import transformer
+# from models import transformer
 from models import whole_models
-from models import submodels
+# from models import submodels
 #dataloader의 정확한 위치를 어디로 하실꺼죠? 그거에 따라서 좀 조절할필요가 있을 거 같아요! 
 from utils.dataloader import get_dataloader
+from utils.options import parse_args  # option arguments
 from utils import config
 from utils import image_processing
 
@@ -29,6 +33,8 @@ from tqdm import tqdm
 from timm.scheduler.cosine_lr import CosineLRScheduler
 #import easydict
 
+
+'''
 #Basic Setting : 임의로 정했습니다.
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu_id', type=int, default=0)
@@ -44,8 +50,9 @@ parser.add_argument('--warmup_lr_init_rate', type=float, default=0.001)
 parser.add_argument('--warmup_t_rate', type=int, default=10)
 parser.add_argument('--t_in_epochs', type=bool, default=False)
 parser.add_argument('--cycle_limit', type=int, default=1)
+'''
 
-args = parser.parse_args()
+args = parse_args()  # Opionts from utils/options.py
 
 
 '''
@@ -103,6 +110,10 @@ if not os.path.exists(save_path_output):
 #hyperparameters save
 with open(save_path_date+'/hyperparameters.txt', 'w') as f:
     json.dump(args.__dict__, f, indent=2)
+    
+# Log summary file
+summary_writer = SummaryWriter(save_path_date)
+
 
 ''' Easydict 용
 file = open(save_path_date+"/hyperparameters.txt", "w")
@@ -118,7 +129,17 @@ device = torch.device('cuda:{}'.format(args.gpu_id) if torch.cuda.is_available()
 #print(torch.cuda.device_count())
 
 #Model setting & save
-model = whole_models.SRTransformer(upscale=args.upscale).to(device)
+model = whole_models.SRTransformer(lr_img_res=args.lr_img_res,
+                                   upscale=args.upscale,
+                                   intermediate_upscale=args.intermediate_upscale,
+                                   patch_size=args.patch_size,
+                                   window_size=args.window_size,
+                                   d_embed=args.d_embed,
+                                   encoder_n_layer=args.encoder_n_layer,
+                                   decoder_n_layer=args.decoder_n_layer,
+                                   n_head=args.n_head,
+                                   dropout=args.dropout).to(device)
+
 torch.save(model, os.path.join(save_path_model+'model.pt'))
 
 #Loss setting
@@ -128,27 +149,26 @@ elif args.loss == 'mse':
     criterion = nn.MSELoss().to(device)
 
 #optimizer : 임의로 정했습니다.
-optimizer = optim.AdamW(params = model.parameters(), lr=args.learning_rate, weight_decay = args.weight_decay)
+optimizer = optim.AdamW(params=model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
 #Dataset
-dataloader_train = get_dataloader(setting ="train", num_workers=4)
+dataloader_train = get_dataloader(batch_size=args.batch_size, setting="train", num_workers=args.num_workers)
 train_size = len(dataloader_train.dataset)
 #print(train_size_l)
 
-max_iter = (train_size//args.batch_size + 1) * args.num_epochs
+max_iter = ((train_size - 1) // args.batch_size + 1) * args.num_epochs
 
-dataloader_val= get_dataloader(setting ="valid", num_workers=4)
+dataloader_val= get_dataloader(batch_size=args.batch_size, setting="valid", augmentation=False, num_workers=args.num_workers)
 val_size = len(dataloader_val.dataset)
 
 #scheduler : warmup + cosin lr decay : 임의로 정했습니다.
 scheduler = CosineLRScheduler(optimizer,
-                            t_initial=max_iter,
-                            lr_min=args.learning_rate*0.01,
-                            warmup_lr_init=args.learning_rate*0.001,
-                            warmup_t=max_iter//10,
-                            cycle_limit=1,
-                            t_in_epochs=False
-                            )
+                              t_initial=max_iter,
+                              lr_min=args.learning_rate*args.lr_min_rate,
+                              warmup_lr_init=args.learning_rate*args.warmup_lr_init_rate,
+                              warmup_t=int(max_iter*args.warmup_t_rate),
+                              cycle_limit=1,
+                              t_in_epochs=False)
 
 #For validation report
 min_valid_loss = 1000
@@ -168,7 +188,7 @@ for epoch in range(args.num_epochs):
     model.train()
     
     with tqdm(train_size) as t:
-        t.set_description('epoch : {}/{}'.format(epoch, args.num_epochs-1))
+        t.set_description('epoch : {}/{}'.format(epoch+1, args.num_epochs))
         
         for batch, items in enumerate(dataloader_train) :
             n_batch = items['origin'].size()[0]
@@ -180,28 +200,31 @@ for epoch in range(args.num_epochs):
             mid_result=model(degraded, interpolated)
             mid_result=image_processing.denormalize(mid_result, device=device)
             loss = criterion(mid_result, origin)
-
            
             optimizer.zero_grad()
             loss.backward()
 
-            nn.utils.clip_grad_norm(model.parameters(), 0.1)
+            nn.utils.clip_grad_norm(model.parameters(), args.grad_clip_norm)
 
             optimizer.step()
+            
+            # Log summaries.
+            summary_writer.add_scalar('Learning Rate', optimizer.param_groups[0]['lr'], _iter)
+            summary_writer.add_scalar('Training Loss', loss.item(), _iter)
 
-            _iter+=1
+            _iter += 1
             scheduler.step_update(_iter)
             t.update(n_batch)
              
-            if (batch+1) %25 ==0:
-                loss, current=loss.item(), (batch+1)*n_batch
+            if (batch+1) % args.summary_steps == 0:
+                loss, current = loss.item(), (batch+1)*n_batch
                 tqdm.write(f"loss: {loss:>6f}, [{current:>5d}/{train_size:>5d}]")
         
-    torch.save(model.state_dict(), os.path.join(save_path_state_dict+'state_dict_epoch_{}.pt'.format(epoch)))
+    torch.save(model.state_dict(), os.path.join(save_path_state_dict+'state_dict_epoch_{}.pt'.format(epoch+1)))
     
     #Validate
     model.eval()
-    loss_val=0
+    loss_val = 0
     with torch.no_grad():
         for batch, items in enumerate(dataloader_val):
             n_batch = items['origin'].size()[0]
@@ -214,14 +237,17 @@ for epoch in range(args.num_epochs):
             mid_result=image_processing.denormalize(mid_result, device=device)
             loss_val += PSNR(mid_result, origin).item()
         
-        loss_val/=(val_size)
+        # Log summaries.
+        loss_val /= val_size
+        summary_writer.add_scalar('PSNR', loss_val, epoch+1)
 
         if loss_val <= min_valid_loss:
-            min_valid_loss=loss_val
-            min_valid_epoch = epoch
+            min_valid_loss = loss_val
+            min_valid_epoch = epoch + 1
         print('validation : {}\n'.format(loss_val))
 
 print('minimum validation {} at epoch {}'.format(min_valid_loss, min_valid_epoch))
 file_rep = open(save_path_date+"/min_val_epoch.txt", "w")
 file_rep.write(f'minimum validation {min_valid_loss} at epoch {min_valid_epoch}')
 file_rep.close()
+summary_writer.close()

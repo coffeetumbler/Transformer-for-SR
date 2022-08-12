@@ -15,6 +15,7 @@ def parse_args():
     
     # General options
     parser.add_argument('--gpu_id', type=int, default=0)
+    parser.add_argument('--num_workers', type=int, default=8)
     
     # Model options
     parser.add_argument('--lr_img_res', type=int, defualt=48,
@@ -41,7 +42,6 @@ def parse_args():
     parser.add_argument('--loss', type=str, default='l1',
                         help='Loss type; l1/mse')
     parser.add_argument('--weight_decay', type=float, default=1e-4)
-    parser.add_argument('--optimizer', type=str, default='AdamW')
     parser.add_argument('--lr_min_rate', type=float, default=0.01)
     parser.add_argument('--warmup_lr_init_rate', type=float, default=0.001)
     parser.add_argument('--warmup_t_rate', type=float, default=0.1)
@@ -52,7 +52,7 @@ def parse_args():
 
     parser.add_argument('--grad_clip_norm', default=0.1, type=float,
                         help='Maximum gradient norm in gradient clipping')
-    parser.add_argument('--summary_steps', default=300, type=int,
+    parser.add_argument('--summary_steps', default=25, type=int,
                         help='Training summary frequency')
     
     return parser.parse_args()
