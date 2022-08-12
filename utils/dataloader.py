@@ -86,7 +86,7 @@ class dataset_SR(Dataset):
 
         items = {}
         items['origin'] = torch.from_numpy(origin.transpose(2,0,1)).float() / 255
-        items['degraded'] = self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1)).float / 255)
+        items['degraded'] = self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1)).float() / 255)
         items['interpolated'] = self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1)).float() / 255)
 
         return items

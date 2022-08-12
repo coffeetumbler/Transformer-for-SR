@@ -140,7 +140,7 @@ model = whole_models.SRTransformer(lr_img_res=args.lr_img_res,
                                    n_head=args.n_head,
                                    dropout=args.dropout).to(device)
 
-torch.save(model, os.path.join(save_path_model+'model.pt'))
+torch.save(model, os.path.join(save_path_model+'/model.pt'))
 
 #Loss setting
 if args.loss == 'l1':
@@ -152,13 +152,22 @@ elif args.loss == 'mse':
 optimizer = optim.AdamW(params=model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
 #Dataset
-dataloader_train = get_dataloader(batch_size=args.batch_size, setting="train", num_workers=args.num_workers)
+mixed_dataset = (args.train_dataset == 'mixed')
+dataloader_train = get_dataloader(batch_size=args.batch_size,
+                                  setting="train",
+                                  num_workers=args.num_workers,
+                                  data=args.train_dataset,
+                                  data_merge=mixed_dataset)
 train_size = len(dataloader_train.dataset)
 #print(train_size_l)
 
 max_iter = ((train_size - 1) // args.batch_size + 1) * args.num_epochs
 
-dataloader_val= get_dataloader(batch_size=args.batch_size, setting="valid", augmentation=False, num_workers=args.num_workers)
+dataloader_val= get_dataloader(batch_size=args.batch_size,
+                               setting="valid",
+                               augmentation=False,
+                               num_workers=args.num_workers,
+                               data=args.valid_dataset)
 val_size = len(dataloader_val.dataset)
 
 #scheduler : warmup + cosin lr decay : 임의로 정했습니다.

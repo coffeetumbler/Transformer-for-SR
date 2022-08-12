@@ -36,8 +36,15 @@ def parse_args():
     parser.add_argument('--dropout', type=float, default=0.1)
     
     # Training options
+    parser.add_argument('--train_dataset', type=str, default='mixed',
+                        help='Training dataset; mixed/DIV2K/BSDS200/General100')
+    parser.add_argument('--test_dataset', type=str, default='BSDS100',
+                        help='Test dataset; DIV2K/BSDS100/Urban100/Manga109/Set5/Set14')
+    parser.add_argument('--valid_dataset', type=str, default='DIV2K',
+                        help='Validation dataset; DIV2K/BSDS100/Urban100/Manga109/Set5/Set14')
+    
     parser.add_argument('--num_epochs', type=int, default=100)
-    parser.add_argument('--lr', '--learning_rate', type=float, default=1e-4)
+    parser.add_argument('--learning_rate', type=float, default=1e-4)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--loss', type=str, default='l1',
                         help='Loss type; l1/mse')
