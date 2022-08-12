@@ -10,7 +10,7 @@ args = parse_args()
 
 def parse_args():
     parser = argparse.ArgumentParser()
-#     parser.add_argument('--', type=, defualt=,
+#     parser.add_argument('--', type=, default=,
 #                         help='')
     
     # General options
@@ -18,26 +18,26 @@ def parse_args():
     parser.add_argument('--num_workers', type=int, default=8)
     
     # Model options
-    parser.add_argument('--lr_img_res', type=int, defualt=48,
+    parser.add_argument('--lr_img_res', type=int, default=48,
                         help='Resolution of low-resolution image')
     parser.add_argument('--upscale', type=int, default=2)
-    parser.add_argument('--intermediate_upscale', defualt=False, action='store_true',
+    parser.add_argument('--intermediate_upscale', default=False, action='store_true',
                         help='x2 upscaling twice for x4 upscaling')
-    parser.add_argument('--patch_size', type=int, defualt=2)
-    parser.add_argument('--window_size', type=int, defualt=4)
-    parser.add_argument('--d_embed', type=int, defualt=128,
+    parser.add_argument('--patch_size', type=int, default=2)
+    parser.add_argument('--window_size', type=int, default=4)
+    parser.add_argument('--d_embed', type=int, default=128,
                         help='Embedding dimension')
-    parser.add_argument('--encoder_n_layer', type=int, defualt=12,
+    parser.add_argument('--encoder_n_layer', type=int, default=12,
                         help='Number of encoder layers')
-    parser.add_argument('--decoder_n_layer', type=int, defualt=12,
+    parser.add_argument('--decoder_n_layer', type=int, default=12,
                         help='Number of decoder layers')
-    parser.add_argument('--n_head', type=int, defualt=4,
+    parser.add_argument('--n_head', type=int, default=4,
                         help='Number of attention heads')
-    parser.add_argument('--dropout', type=float, defualt=0.1)
+    parser.add_argument('--dropout', type=float, default=0.1)
     
     # Training options
     parser.add_argument('--num_epochs', type=int, default=100)
-    parser.add_argument('--lr', '--learning_rate', type=float, defualt=1e-4)
+    parser.add_argument('--lr', '--learning_rate', type=float, default=1e-4)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--loss', type=str, default='l1',
                         help='Loss type; l1/mse')
