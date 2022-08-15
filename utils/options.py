@@ -33,6 +33,10 @@ def parse_args():
                         help='Number of decoder layers')
     parser.add_argument('--n_head', type=int, default=4,
                         help='Number of attention heads')
+    parser.add_argument('--interpolated_decoder_input', default=False, action='store_true',
+                        help='Interpolated images for decoder inputs')
+    parser.add_argument('--decoder_input_from_encoder', dest='raw_decoder_input', default=True,
+                        action='store_false', help='Make decoder inputs from encoder outputs')
     parser.add_argument('--dropout', type=float, default=0.1)
     
     # Training options
@@ -61,5 +65,7 @@ def parse_args():
                         help='Maximum gradient norm in gradient clipping')
     parser.add_argument('--summary_steps', default=25, type=int,
                         help='Training summary frequency')
+    parser.add_argument('--validation_steps', default=10, type=int,
+                        help='Validation and checkpoint saving frequency')
     
     return parser.parse_args()

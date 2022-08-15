@@ -138,6 +138,8 @@ model = whole_models.SRTransformer(lr_img_res=args.lr_img_res,
                                    encoder_n_layer=args.encoder_n_layer,
                                    decoder_n_layer=args.decoder_n_layer,
                                    n_head=args.n_head,
+                                   interpolated_decoder_input=args.interpolated_decoder_input,
+                                   raw_decoder_input=args.raw_decoder_input,
                                    dropout=args.dropout).to(device)
 
 torch.save(model, os.path.join(save_path_model+'/model.pt'))
@@ -179,9 +181,9 @@ scheduler = CosineLRScheduler(optimizer,
                               cycle_limit=1,
                               t_in_epochs=False)
 
-#For validation report
-min_valid_loss = 1000
-min_valid_epoch = 0
+# For validation report, max value is best!
+max_valid_loss = 0
+max_valid_epoch = 0
 _iter = 0
 
 def PSNR(A, B):
@@ -199,13 +201,13 @@ for epoch in range(args.num_epochs):
     with tqdm(train_size) as t:
         t.set_description('epoch : {}/{}'.format(epoch+1, args.num_epochs))
         
-        for batch, items in enumerate(dataloader_train) :
+        for batch, items in enumerate(dataloader_train):
             n_batch = items['origin'].size()[0]
             
             origin = items['origin'].to(device)
             degraded=items['degraded'].to(device)
             interpolated=items['interpolated'].to(device)
-            #print(origin.dtype, degraded.dtype, interpolated.dtype)
+            
             mid_result=model(degraded, interpolated)
             mid_result=image_processing.denormalize(mid_result, device=device)
             loss = criterion(mid_result, origin)
@@ -229,34 +231,53 @@ for epoch in range(args.num_epochs):
                 loss, current = loss.item(), (batch+1)*n_batch
                 tqdm.write(f"loss: {loss:>6f}, [{current:>5d}/{train_size:>5d}]")
         
-    torch.save(model.state_dict(), os.path.join(save_path_state_dict+'state_dict_epoch_{}.pt'.format(epoch+1)))
-    
-    #Validate
-    model.eval()
-    loss_val = 0
-    with torch.no_grad():
-        for batch, items in enumerate(dataloader_val):
-            n_batch = items['origin'].size()[0]
+    # Validate and save the checkpoint.
+    if (epoch + 1) % args.validation_steps == 0:
+        _epoch = epoch + 1
+        torch.save(model.state_dict(), os.path.join(save_path_state_dict, 'state_dict_epoch_{}.pt'.format(_epoch)))
 
-            origin = items['origin'].to(device)
-            degraded=items['degraded'].to(device)
-            interpolated=items['interpolated'].to(device)
-
-            mid_result=model(degraded, interpolated)
-            mid_result=image_processing.denormalize(mid_result, device=device)
-            loss_val += PSNR(mid_result, origin).item()
+        # Validate
+        model.eval()
+        loss_val = 0
+        loss_base = 0
         
-        # Log summaries.
-        loss_val /= val_size
-        summary_writer.add_scalar('PSNR', loss_val, epoch+1)
+        with torch.no_grad():
+            for batch, items in enumerate(dataloader_val):
+                n_batch = items['origin'].size()[0]
 
-        if loss_val <= min_valid_loss:
-            min_valid_loss = loss_val
-            min_valid_epoch = epoch + 1
-        print('validation : {}\n'.format(loss_val))
+                origin = items['origin'].to(device)
+                degraded=items['degraded'].to(device)
+                interpolated=items['interpolated'].to(device)
 
-print('minimum validation {} at epoch {}'.format(min_valid_loss, min_valid_epoch))
-file_rep = open(save_path_date+"/min_val_epoch.txt", "w")
-file_rep.write(f'minimum validation {min_valid_loss} at epoch {min_valid_epoch}')
+                mid_result=model(degraded, interpolated)
+                mid_result=image_processing.denormalize(mid_result, device=device)
+                loss_val += PSNR(mid_result, origin).item()
+                
+                # Baseline evaluation error with interpolated images
+                interpolated = image_processing.denormalize(interpolated, device=device)
+                loss_base += PSNR(interpolated, origin).item()
+                
+            os.mkdir(save_path_output + '/epoch_{}'.format(_epoch))
+            for j, orig, res, intp in zip(range(len(origin)), origin, mid_result, interpolated):
+                cv2.imwrite(save_path_output + '/epoch_{0}/origin_{1}.png'.format(_epoch, j+1), orig.permute(1,2,0).cpu().numpy() * 255)
+                cv2.imwrite(save_path_output + '/epoch_{0}/restored_{1}.png'.format(_epoch, j+1), res.permute(1,2,0).cpu().numpy() * 255)
+                cv2.imwrite(save_path_output + '/epoch_{0}/interpolated_{1}.png'.format(_epoch, j+1), intp.permute(1,2,0).cpu().numpy() * 255)
+
+            # Log summaries.
+            loss_val /= val_size
+            loss_base /= val_size
+            loss_ratio = loss_val / loss_base
+            
+            summary_writer.add_scalar('PSNR', loss_val, _epoch)
+            summary_writer.add_scalar('PSNR Ratio to Baseline', loss_ratio, _epoch)
+
+            if loss_val >= max_valid_loss:
+                max_valid_loss = loss_val
+                max_valid_epoch = epoch + 1
+            print('validation : {0}, baseline : {1}, ratio : {2}\n'.format(loss_val, loss_base, loss_ratio))
+
+print('maximum validation {} at epoch {}'.format(max_valid_loss, max_valid_epoch))
+file_rep = open(save_path_date+"/max_val_epoch.txt", "w")
+file_rep.write(f'maximum validation {max_valid_loss} at epoch {max_valid_epoch}')
 file_rep.close()
 summary_writer.close()

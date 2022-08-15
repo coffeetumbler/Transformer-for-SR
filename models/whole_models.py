@@ -25,18 +25,26 @@ class SRTransformer(nn.Module):
         encoder_n_layer : number of layers in encoder
         decoder_n_layer : number of layers in decoder
         n_head : number of heads in self-attention module
+        interpolated_decoder_input : True if decoder inputs are interpolated images
+        raw_decoder_input : True is decoder inputs are from raw degraded images
         dropout : dropout ratio
     """
     def __init__(self, lr_img_res=48, upscale=2, intermediate_upscale=False,
                        patch_size=2, window_size=4, d_embed=128,
-                       encoder_n_layer=12, decoder_n_layer=12, n_head=4, dropout=0.1):
+                       encoder_n_layer=12, decoder_n_layer=12, n_head=4,
+                       interpolated_decoder_input=False, raw_decoder_input=True, dropout=0.1):
         super(SRTransformer, self).__init__()
         assert lr_img_res % (patch_size * window_size) == 0
         assert d_embed % n_head == 0
         
+        self.lr_img_res = lr_img_res
+        self.upscale = upscale
+        self.hr_img_res = lr_img_res * upscale
+        self.upscaled_patch_size = patch_size * upscale
+        
         # numbers of patches along an axis
-        encoder_n_patch = lr_img_res // patch_size
-        decoder_n_patch = encoder_n_patch * upscale
+        self.encoder_n_patch = lr_img_res // patch_size
+        decoder_n_patch = self.encoder_n_patch * upscale
         
         # encoder embedding layer and reconstruction block
         self.encoder_embedding_layer = EmbeddingLayer(patch_size, d_embed)
@@ -49,9 +57,20 @@ class SRTransformer(nn.Module):
                                                            n_layer=encoder_n_layer,
                                                            n_head=n_head,
                                                            d_ff=d_embed*4,
-                                                           n_patch=encoder_n_patch,
+                                                           n_patch=self.encoder_n_patch,
                                                            window_size=window_size,
                                                            dropout=dropout)
+        
+        # decoder input query configs
+        self.no_decoder_input = not(interpolated_decoder_input)
+        if self.no_decoder_input:
+            self.raw_decoder_input = raw_decoder_input
+            if raw_decoder_input:
+                self.upsampling = nn.Conv2d(3, 3*(upscale**2), kernel_size=1, stride=1)
+            else:
+                self.upsampling = nn.Linear(d_embed, 3*(upscale**2)*(patch_size**2))
+            nn.init.xavier_uniform_(self.upsampling.weight)
+            nn.init.zeros_(self.upsampling.bias)
 
         # decoder and decoder embedding layer
         if upscale > 1 and upscale < 4:
@@ -64,7 +83,7 @@ class SRTransformer(nn.Module):
                                                                d_ff=d_embed*4,
                                                                query_n_patch=decoder_n_patch,
                                                                query_window_size=window_size*upscale,
-                                                               key_n_patch=encoder_n_patch,
+                                                               key_n_patch=self.encoder_n_patch,
                                                                key_window_size=window_size,
                                                                dropout=dropout)
             self.intermediate_upscale = False
@@ -79,7 +98,7 @@ class SRTransformer(nn.Module):
                                                            d_embed=d_embed,
                                                            n_layer=decoder_n_layer,
                                                            n_head=n_head,
-                                                           encoder_n_patch=encoder_n_patch,
+                                                           encoder_n_patch=self.encoder_n_patch,
                                                            dropout=dropout)
             # one-stage decoder
             else:
@@ -88,10 +107,10 @@ class SRTransformer(nn.Module):
                                                            d_embed=d_embed,
                                                            n_layer=decoder_n_layer,
                                                            n_head=n_head,
-                                                           encoder_n_patch=encoder_n_patch,
+                                                           encoder_n_patch=self.encoder_n_patch,
                                                            dropout=dropout)
         
-    def forward(self, lr_img, lr_img_upscaled):
+    def forward(self, lr_img, lr_img_upscaled=None):
         """
         <input>
             lr_img : (n_batch, 3, img_height, img_width), low-res image
@@ -101,15 +120,29 @@ class SRTransformer(nn.Module):
             hr_img : (n_batch, 3, upscale*img_height, upscale*img_width), high-res image
         """
         # Encode low-resolution image
-        lr_img = self.encoder_embedding_layer(lr_img)
-        lr_img = self.transformer_encoder(lr_img)
+        encoder_out = self.encoder_embedding_layer(lr_img)
+        encoder_out = self.transformer_encoder(encoder_out)
+        
+        # Make initial upscaled lr_img
+        if self.no_decoder_input:
+            # Initial lr_img_upscaled from lr_img
+            if self.raw_decoder_input:
+                lr_img_upscaled = self.upsampling(lr_img).view(-1, 3, self.upscale, self.upscale,
+                                                               self.lr_img_res, self.lr_img_res)
+                lr_img_upscaled = lr_img_upscaled.transpose(3, 4).contiguous().view(-1, 3, self.hr_img_res, self.hr_img_res)
+            # Initial lr_img_upscaled from encoder_out
+            else:
+                lr_img_upscaled = self.upsampling(encoder_out).view(-1, self.encoder_n_patch, self.encoder_n_patch,
+                                                                    self.upscaled_patch_size, self.upscaled_patch_size, 3)
+                lr_img_upscaled = lr_img_upscaled.permute(0, 5, 1, 3, 2, 4).contiguous()
+                lr_img_upscaled = lr_img_upscaled.view(-1, 3, self.hr_img_res, self.hr_img_res)
         
         # Make high-resolution image
         out = self.decoder_embedding_layer(lr_img_upscaled)
         if self.intermediate_upscale:
-            out, lr_img_upscaled = self.transformer_decoder(out, lr_img, lr_img_upscaled)
+            out, lr_img_upscaled = self.transformer_decoder(out, encoder_out, lr_img_upscaled)
         else:
-            out = self.transformer_decoder(out, lr_img)
+            out = self.transformer_decoder(out, encoder_out)
         return lr_img_upscaled + self.reconstruction_block(out)
     
     
