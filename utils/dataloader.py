@@ -38,10 +38,11 @@ class dataset_SR(Dataset):
         self.normalize_img = Normalize(config.IMG_NORM_MEAN, config.IMG_NORM_STD)
         self.prefix = self.MODE_PATH[self.setting] + self.data + '/'
         self.data_merge = data_merge
+        self.intersection = config.PIXEL_INTERSECTION
 
         if self.setting == "train":
             self.DATA_LIST = config.TRAINING_DATA_LIST
-        elif self.setting == "test":
+        else:
             self.DATA_LIST = config.TEST_DATA_LIST
         
         if self.data_merge:
@@ -65,6 +66,23 @@ class dataset_SR(Dataset):
             view_path = self.prefix + self.data_name_list.iloc[idx]['name']
             
         origin = cv2.imread(view_path, cv2.IMREAD_UNCHANGED).copy()
+        if self.setting == "valid":
+            idx_x = [i for i in range(0,origin.shape[0]-self.img_size+1, self.img_size-self.intersection)]
+            # idx_x_end = idx_x + self.img_size
+            if origin.shape[0]%(self.img_size) != 0:
+                idx_x = np.append(idx_x, origin.shape[0]-self.img_size)
+            idx_y = [i for i in range(0,origin.shape[1]-self.img_size+1, self.img_size-self.intersection)]
+            if origin.shape[1]%(self.img_size) != 0:
+                idx_y = np.append(idx_y, origin.shape[1]-self.img_size)
+            item_origin = {}
+            item_degraded = {}
+            for i in idx_x:
+                for j in idx_y:
+                    item_origin["{}_{}".format(i,j)] = origin[i:i+self.img_size, j:j+self.img_size]
+                    item_degraded["{}_{}".format(i,j)] = self.normalize_img(torch.from_numpy(cv2.resize(origin[i:i+self.img_size, j:j+self.img_size], dsize=(48,48), interpolation=cv2.INTER_CUBIC).transpose(2,0,1)).float() / 255)
+            items = {"item_origin" : item_origin, "item_degraded" : item_degraded}
+            return items
+
         p, q = random.randint(0, origin.shape[0]-self.img_size), random.randint(0, origin.shape[1]-self.img_size)
         origin = origin[p:p+self.img_size,  q:q+self.img_size] #random crop(96*96)으로 origin data 생성
         if self.augmentation:
@@ -98,7 +116,7 @@ def get_dataloader(batch_size=16, setting='train', augmentation=True, pin_memory
         augmentation = True
     elif setting == 'test':
         augmentation = False
-    elif setting == 'valid':
-        setting = 'test'
+    # elif setting == 'valid':
+    #     setting = 'test'
     dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
     return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory, num_workers=num_workers)
