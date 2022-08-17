@@ -75,7 +75,7 @@ args = easydict.EasyDict({
 
 #Date
 now=time.localtime()
-ntime="%04d%02d%02d_%02d%02d"%(now.tm_year, now.tm_mon, now.tm_mday, now.tm_hour, now.tm_min)
+ntime="%04d%02d%02d_%02d%02d%02d"%(now.tm_year, now.tm_mon, now.tm_mday, now.tm_hour, now.tm_min, now.tm_sec)
 
 #Save Path
 save_path ='./logs'
@@ -91,15 +91,6 @@ if not os.path.exists(save_path_upscale):
     os.mkdir(save_path_upscale)
 if not os.path.exists(save_path_date):
     os.mkdir(save_path_date)
-else: #To prevent overwrite. Ex. A, A(0), A(1), ...
-    for i in range(500):
-        save_path_date=save_path_date+"("+str(i)+")"
-        if not os.path.exists(save_path_date):
-            os.mkdir(save_path_date)
-            with open(save_path_date+'/hyperparameters.txt', 'w') as f:
-                json.dump(args.__dict__, f, indent=2)
-        break
-    save_path_date = save_path_upscale+'/'+ntime
 if not os.path.exists(save_path_state_dict):
     os.mkdir(save_path_state_dict)
 if not os.path.exists(save_path_model):
