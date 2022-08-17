@@ -74,13 +74,14 @@ class dataset_SR(Dataset):
             idx_y = [i for i in range(0,origin.shape[1]-self.img_size+1, self.img_size-self.intersection)]
             if origin.shape[1]%(self.img_size) != 0:
                 idx_y = np.append(idx_y, origin.shape[1]-self.img_size)
-            item_origin = {}
             item_degraded = {}
+            mask = torch.zeros(origin.shape[0], origin.shape[1])
             for i in idx_x:
                 for j in idx_y:
-                    item_origin["{}_{}".format(i,j)] = origin[i:i+self.img_size, j:j+self.img_size]
-                    item_degraded["{}_{}".format(i,j)] = self.normalize_img(torch.from_numpy(cv2.resize(origin[i:i+self.img_size, j:j+self.img_size], dsize=(48,48), interpolation=cv2.INTER_CUBIC).transpose(2,0,1)).float() / 255)
-            items = {"item_origin" : item_origin, "item_degraded" : item_degraded}
+                    item_degraded[(i,j)] = self.normalize_img(torch.from_numpy(cv2.resize(origin[i:i+self.img_size, j:j+self.img_size], dsize=(48,48), interpolation=cv2.INTER_CUBIC).transpose(2,0,1)).float() / 255)
+                    mask[i:i+self.img_size, j:j+self.img_size] += 1
+            origin = torch.from_numpy(origin.transpose(2,0,1)).float() / 255
+            items = {"origin" : origin, "degraded" : item_degraded, "mask" : mask}
             return items
 
         p, q = random.randint(0, origin.shape[0]-self.img_size), random.randint(0, origin.shape[1]-self.img_size)
@@ -112,11 +113,19 @@ class dataset_SR(Dataset):
     
     
 def get_dataloader(batch_size=16, setting='train', augmentation=True, pin_memory=False, num_workers=0, **kwargs): #num_workers는 hyperparameter tunning의 영역
-    if setting == 'train':
-        augmentation = True
-    elif setting == 'test':
-        augmentation = False
-    # elif setting == 'valid':
-    #     setting = 'test'
-    dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
-    return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory, num_workers=num_workers)
+    if setting !='valid':    
+        if setting == 'train':
+            augmentation = True
+        elif setting == 'test':
+            augmentation = False
+        dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
+        return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory, num_workers=num_workers)
+    elif setting == 'valid':
+        # setting = 'test'
+        # setting = 'test'
+        # augmentation = False
+        # batch_size = 1
+        # dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
+        # loader = DataLoader(dataloader, batch_size=batch_size=1, shuffle=augmentation, pin_memory=pin_memory, num_sorkers=num_workers)
+        dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
+        return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory, num_workers=num_workers)
