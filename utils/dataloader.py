@@ -12,7 +12,28 @@ from torchvision.transforms import Normalize
 
 import config
 
+class valid_batch_making:
+    def __init__(self, items, batch=4):
+        self.current = 0
+        self.items = items
+        self.stop = len(items['degraded'].keys())
+        self.batch = batch
 
+        concatenated = torch.tensor([])
+        for key, value in self.items['degraded'].items():
+            concatenated = torch.cat((value, concatenated))
+        self.items = concatenated
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.current < self.stop:
+            temp = self.items[self.current:min(self.current + self.batch, self.stop), :, :, :]
+            self.current += self.batch
+            return temp
+        else:
+            raise StopIteration
 
 class dataset_SR(Dataset):
     def __init__(self,
@@ -121,11 +142,10 @@ def get_dataloader(batch_size=16, setting='train', augmentation=True, pin_memory
         dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
         return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory, num_workers=num_workers)
     elif setting == 'valid':
-        # setting = 'test'
-        # setting = 'test'
+
         # augmentation = False
         # batch_size = 1
         # dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
         # loader = DataLoader(dataloader, batch_size=batch_size=1, shuffle=augmentation, pin_memory=pin_memory, num_sorkers=num_workers)
-        dataloader = dataset_SR(setting=setting, augmentation=augmentation, **kwargs)
-        return DataLoader(dataloader, batch_size=batch_size, shuffle=augmentation, pin_memory=pin_memory, num_workers=num_workers)
+        dataloader = dataset_SR(setting=setting, augmentation=False, **kwargs)
+        return DataLoader(dataloader, batch_size=1, shuffle=False, pin_memory=pin_memory, num_workers=num_workers)
