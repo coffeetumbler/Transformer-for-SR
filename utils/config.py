@@ -10,8 +10,8 @@ MODE_PATH = {"train" : DATASET_DIR + 'SR_training_datasets/',
              "test" : DATASET_DIR + 'SR_testing_datasets/',
              "valid" : DATASET_DIR + 'SR_testing_datasets/'}
 MATLAB_MODE_PATH = {"train" : MATLAB_DATASET_DIR + 'Data/train/',
-             "test" : MATLAB_DATASET_DIR + 'Data/test/',
-             "valid" : MATLAB_DATASET_DIR + 'Data/test/'}
+             "test" : MATLAB_DATASET_DIR + 'Data/valid/',
+             "valid" : MATLAB_DATASET_DIR + 'Data/valid/'}
 
 
 
@@ -22,11 +22,11 @@ MATLAB_DATA_LIST_DIR = MATLAB_DATASET_DIR + 'Data/DataName/'
 
 
 TRAINING_DATA_LIST = ["DIV2K", "BSDS200", "General100"]
-TEST_DATA_LIST = ["DIV2K", "BSDS100", "Urban100", "Manga109", "Set5", "Set14"]
+TEST_DATA_LIST = ["DIV2K", "BSD100", "Urban100", "Manga109", "Set5", "Set14"]
 
 MATLAB_TRAINING_DATA_LIST = ["DIV2K", "Flickr2K"]
-MATLAB_TEST_DATA_LIST = ["DIV2K", "BSDS100", "Urban100", "Manga109", "Set5", "Set14"]##to be updated
-
+MATLAB_TEST_DATA_LIST = ["Set5", "Set14"]##to be updated
+# MATLAB_TEST_DATA_LIST = ["BSD100", "Urban100", "Manga109", "Set5", "Set14"]
 
 
 # Image settings
@@ -39,4 +39,4 @@ GRAY_COEF = [24.966, 128.553, 65.481]  # BGR order
 GRAY_BIAS = 16.
 
 # Validation settings
-PIXEL_INTERSECTION = 17
+PIXEL_INTERSECTION = 18
