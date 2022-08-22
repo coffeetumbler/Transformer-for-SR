@@ -111,7 +111,7 @@ class dataset_SR(Dataset):
 
     def __getitem__(self, idx):
 
-        if and(self.Matlab_mode == True, self.setting == "train"):
+        if self.Matlab_mode and (self.setting == "train"):
             view_path_HR = self.Matlab_mode_path[self.setting] + self.data_name_list_HR.iloc[idx]['data'] + '_train_HR/' + self.data_name_list_HR.iloc[idx]['name']
             view_path_degraded = self.Matlab_mode_path[self.setting] + self.data_name_list_degraded.iloc[idx]['data'] + '_train_LR_bicubic/X' + str(self.SR_mode) + '/' + self.data_name_list_degraded.iloc[idx]['name']
             HR_image = cv2.imread(view_path_HR, cv2.IMREAD_UNCHANGED).copy()
@@ -125,9 +125,7 @@ class dataset_SR(Dataset):
             items['degraded'] = self.normalize_img(torch.from_numpy(degraded_image.transpose(2,0,1)).float() / 255)
             items['interpolated'] = self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1)).float() / 255)
             return items
-        elif or(self.Matlab_mode == True, self.setting == "test", self.setting == "valid"):
-
-
+        # elif or(self.Matlab_mode == True, self.setting == "test", self.setting == "valid"):
 
         else:
             if self.data_merge:
