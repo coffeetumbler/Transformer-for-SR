@@ -41,7 +41,9 @@ class dataset_SR(Dataset):
                 augmentation = True,
                 SR_mode = 2,
                 data="DIV2K",
-                data_merge = False
+                data_merge = False,
+                Matlab_mode = True,
+                Matlab_degraded_mode = "bicubic"
                 ):
         super(dataset_SR, self).__init__()
         self.SR_mode = SR_mode
@@ -60,76 +62,126 @@ class dataset_SR(Dataset):
         self.prefix = self.MODE_PATH[self.setting] + self.data + '/'
         self.data_merge = data_merge
         self.intersection = config.PIXEL_INTERSECTION
+        self.Matlab_mode = Matlab_mode
+        self.degraded_mode = Matlab_degraded_mode
+        self.Matlab_mode_path = config.MATLAB_MODE_PATH
 
-        if self.setting == "train":
-            self.DATA_LIST = config.TRAINING_DATA_LIST
+        if self.Matlab_mode == True:
+            if self.setting == "train":
+                self.DATA_LIST = config.MATLAB_TRAINING_DATA_LIST
+            else:
+                self.DATA_LIST = config.MATLAB_TEST_DATA_LIST
+            if self.data_merge:
+                data_all_HR = []
+                data_all_degraded = []
+                for i in self.DATA_LIST:
+                    df = pd.read_csv(config.MATLAB_DATA_LIST_DIR + i + '_' + self.setting + '_HR'+ '.csv').sort_values(by='name')
+                    data_all_HR.append(df)
+                    df_degraded = pd.read_csv(config.MATLAB_DATA_LIST_DIR + i + '_' + self.setting + '_LR_bicubic_X' + str(self.SR_mode) + '.csv').sort_values(by='name')
+                    data_all_degraded.append(df_degraded)
+                self.data_name_list_HR = pd.concat(data_all_HR, axis=0, ignore_index=True)
+                self.data_name_list_degraded = pd.concat(data_all_degraded, axis=0, ignore_index=True)
+            else:
+                self.data_name_list_HR = pd.read_csv(config.MATLAB_DATA_LIST_DIR + self.data + '_' + self.setting + "_HR.csv").sort_values(by='name')
+                self.data_name_list_degraded = pd.read_csv(config.MATLAB_DATA_LIST_DIR + self.data + '_' + self.setting + "_LR_bicubic_X" + str(self.SR_mode) + '.csv').sort_values(by='name')
+
+
         else:
-            self.DATA_LIST = config.TEST_DATA_LIST
-        
-        if self.data_merge:
-            data_all = []
-            for i in self.DATA_LIST:
-                df = pd.read_csv(config.DATA_LIST_DIR + self.setting + "_" + i + ".csv")
-                data_all.append(df)
-            self.data_name_list = pd.concat(data_all, axis=0, ignore_index=True)
-        else:
-            self.data_name_list = pd.read_csv(config.DATA_LIST_DIR + self.setting + "_" + self.data + ".csv")
+            if self.setting == "train":
+                self.DATA_LIST = config.TRAINING_DATA_LIST
+            else:
+                self.DATA_LIST = config.TEST_DATA_LIST
+
+            if self.data_merge:
+                data_all = []
+                for i in self.DATA_LIST:
+                    df = pd.read_csv(config.DATA_LIST_DIR + self.setting + "_" + i + ".csv")
+                    data_all.append(df)
+                self.data_name_list = pd.concat(data_all, axis=0, ignore_index=True)
+            else:
+                self.data_name_list = pd.read_csv(config.DATA_LIST_DIR + self.setting + "_" + self.data + ".csv")
             
 
     def __len__(self):
-        return len(self.data_name_list)
+        if self.Matlab_mode == True:
+            return len(self.data_name_list_HR)
+        else:
+            return len(self.data_name_list)
     
 
     def __getitem__(self, idx):
-        if self.data_merge:
-            view_path = self.MODE_PATH[self.setting] + self.data_name_list.iloc[idx]['data'] + '/' + self.data_name_list.iloc[idx]['name']
-        else:
-            view_path = self.prefix + self.data_name_list.iloc[idx]['name']
-            
-        origin = cv2.imread(view_path, cv2.IMREAD_UNCHANGED).copy()
-        if self.setting == "valid":
-            idx_x = [i for i in range(0,origin.shape[0]-self.img_size+1, self.img_size-self.intersection)]
-            # idx_x_end = idx_x + self.img_size
-            if origin.shape[0]%(self.img_size) != 0:
-                idx_x = np.append(idx_x, origin.shape[0]-self.img_size)
-            idx_y = [i for i in range(0,origin.shape[1]-self.img_size+1, self.img_size-self.intersection)]
-            if origin.shape[1]%(self.img_size) != 0:
-                idx_y = np.append(idx_y, origin.shape[1]-self.img_size)
-            item_degraded = {}
-            mask = torch.zeros(origin.shape[0], origin.shape[1])
-            for i in idx_x:
-                for j in idx_y:
-                    item_degraded[(i,j)] = self.normalize_img(torch.from_numpy(cv2.resize(origin[i:i+self.img_size, j:j+self.img_size], dsize=(48,48), interpolation=cv2.INTER_CUBIC).transpose(2,0,1)).float() / 255)
-                    mask[i:i+self.img_size, j:j+self.img_size] += 1
-            origin = torch.from_numpy(origin.transpose(2,0,1)).float() / 255
-            items = {"origin" : origin, "degraded" : item_degraded, "mask" : mask}
+
+        if and(self.Matlab_mode == True, self.setting == "train"):
+            view_path_HR = self.Matlab_mode_path[self.setting] + self.data_name_list_HR.iloc[idx]['data'] + '_train_HR/' + self.data_name_list_HR.iloc[idx]['name']
+            view_path_degraded = self.Matlab_mode_path[self.setting] + self.data_name_list_degraded.iloc[idx]['data'] + '_train_LR_bicubic/X' + str(self.SR_mode) + '/' + self.data_name_list_degraded.iloc[idx]['name']
+            HR_image = cv2.imread(view_path_HR, cv2.IMREAD_UNCHANGED).copy()
+            degraded_image = cv2.imread(view_path_degraded, cv2.IMREAD_UNCHANGED).copy()
+            p, q = random.randint(0, degraded_image.shape[0]-48), random.randint(0, degraded_image.shape[1]-48)
+            HR_image = HR_image[2*p:2*(p+48),  2*q:2*(q+48)]
+            degraded_image = degraded_image[p:p+48,  q:q+48]
+            interpolated = cv2.resize(degraded_image, dsize=(self.img_size,self.img_size), interpolation=cv2.INTER_CUBIC)#와꾸만 맞출려고
+            items = {}
+            items['origin'] = torch.from_numpy(HR_image.transpose(2,0,1)).float() / 255
+            items['degraded'] = self.normalize_img(torch.from_numpy(degraded_image.transpose(2,0,1)).float() / 255)
+            items['interpolated'] = self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1)).float() / 255)
             return items
+        elif or(self.Matlab_mode == True, self.setting == "test", self.setting == "valid"):
 
-        p, q = random.randint(0, origin.shape[0]-self.img_size), random.randint(0, origin.shape[1]-self.img_size)
-        origin = origin[p:p+self.img_size,  q:q+self.img_size] #random crop(96*96)으로 origin data 생성
-        if self.augmentation:
-            if self.channel_wise_noise: #channel-wise noise
-                pn = np.random.uniform(*[1 - 0.4, 1 + 0.4], size=(3))
-                origin = np.minimum(255., np.maximum(0., origin * pn[np.newaxis, np.newaxis, :]))
-            if random.random() < self.flip: #좌우반전
-                origin = cv2.flip(origin, 1)
-            if self.rotation != False: #rotation
-                rd = random.random()
-                if rd < 3/4:
-                    origin = cv2.rotate(origin, random.choice(self.rotation))
-            degraded = cv2.resize(origin, dsize=(48,48), interpolation=random.choice(self.degradation))
-            
+
+
         else:
-            degraded = cv2.resize(origin, dsize=(48,48), interpolation=cv2.INTER_CUBIC)
-            
-        interpolated = cv2.resize(degraded, dsize=(self.img_size,self.img_size), interpolation=cv2.INTER_CUBIC) #bicubic으로 degraded를 96*96 size 복원 fx=0.5, fy=0.5,
+            if self.data_merge:
+                view_path = self.MODE_PATH[self.setting] + self.data_name_list.iloc[idx]['data'] + '/' + self.data_name_list.iloc[idx]['name']
+            else:
+                view_path = self.prefix + self.data_name_list.iloc[idx]['name']
+                
+            origin = cv2.imread(view_path, cv2.IMREAD_UNCHANGED).copy()
+            if self.setting == "valid":
+                idx_x = [i for i in range(0,origin.shape[0]-self.img_size+1, self.img_size-self.intersection)]
+                # idx_x_end = idx_x + self.img_size
+                if origin.shape[0]%(self.img_size) != 0:
+                    idx_x = np.append(idx_x, origin.shape[0]-self.img_size)
+                idx_y = [i for i in range(0,origin.shape[1]-self.img_size+1, self.img_size-self.intersection)]
+                if origin.shape[1]%(self.img_size) != 0:
+                    idx_y = np.append(idx_y, origin.shape[1]-self.img_size)
+                item_degraded = {}
+                mask = torch.zeros(origin.shape[0], origin.shape[1])
+                for i in idx_x:
+                    for j in idx_y:
+                        item_degraded[(i,j)] = self.normalize_img(torch.from_numpy(cv2.resize(origin[i:i+self.img_size, j:j+self.img_size], dsize=(48,48), interpolation=cv2.INTER_CUBIC).transpose(2,0,1)).float() / 255)
+                        mask[i:i+self.img_size, j:j+self.img_size] += 1
+                origin = torch.from_numpy(origin.transpose(2,0,1)).float() / 255
+                items = {"origin" : origin, "degraded" : item_degraded, "mask" : mask}
+                return items
 
-        items = {}
-        items['origin'] = torch.from_numpy(origin.transpose(2,0,1)).float() / 255
-        items['degraded'] = self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1)).float() / 255)
-        items['interpolated'] = self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1)).float() / 255)
 
-        return items
+
+
+            p, q = random.randint(0, origin.shape[0]-self.img_size), random.randint(0, origin.shape[1]-self.img_size)
+            origin = origin[p:p+self.img_size,  q:q+self.img_size] #random crop(96*96)으로 origin data 생성
+            if self.augmentation:
+                if self.channel_wise_noise: #channel-wise noise
+                    pn = np.random.uniform(*[1 - 0.4, 1 + 0.4], size=(3))
+                    origin = np.minimum(255., np.maximum(0., origin * pn[np.newaxis, np.newaxis, :]))
+                if random.random() < self.flip: #좌우반전
+                    origin = cv2.flip(origin, 1)
+                if self.rotation != False: #rotation
+                    rd = random.random()
+                    if rd < 3/4:
+                        origin = cv2.rotate(origin, random.choice(self.rotation))
+                degraded = cv2.resize(origin, dsize=(48,48), interpolation=random.choice(self.degradation))
+                
+            else:
+                degraded = cv2.resize(origin, dsize=(48,48), interpolation=cv2.INTER_CUBIC)
+                
+            interpolated = cv2.resize(degraded, dsize=(self.img_size,self.img_size), interpolation=cv2.INTER_CUBIC) #bicubic으로 degraded를 96*96 size 복원 fx=0.5, fy=0.5,
+
+            items = {}
+            items['origin'] = torch.from_numpy(origin.transpose(2,0,1)).float() / 255
+            items['degraded'] = self.normalize_img(torch.from_numpy(degraded.transpose(2,0,1)).float() / 255)
+            items['interpolated'] = self.normalize_img(torch.from_numpy(interpolated.transpose(2,0,1)).float() / 255)
+
+            return items
 
     
     
