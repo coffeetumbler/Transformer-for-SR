@@ -14,26 +14,43 @@ import utils.functions as functions
 
 # Main transformer encoder
 class TransformerEncoder(nn.Module):
-    def __init__(self, positional_encoding_layer, encoder_layer, n_layer):
+    def __init__(self, positional_encoding_layer, encoder_layer, n_layer, mask):
         super(TransformerEncoder, self).__init__()
+        self.n_layer = n_layer
         self.encoder_layers = functions.clone_layer(encoder_layer, n_layer)
+        self.register_buffer('mask', mask)
+        
+        self.n_head = encoder_layer.attention_layer.n_head
+        self.window_size = encoder_layer.attention_layer.query_config['window_size']
             
         self.positional_encoding = True if positional_encoding_layer is not None else False
         if self.positional_encoding:
             self.positional_encoding_layer = positional_encoding_layer
         
-    def forward(self, x):
+    def forward(self, x, load_mask=True, padding_mask=None):
         """
         <input>
             x : (n_batch, H, W, d_embed)
+            load_mask : Use self.mask as mask input if True
         """
         if self.positional_encoding:
             x = self.positional_encoding_layer(x)
 
+        if load_mask:
+            mask = self.mask
+        else:
+            _, H, W, _ = x.shape
+            mask = functions.masking_matrix(self.n_head, H, W, self.window_size, self.window_size//2).to(x.device)
+            if padding_mask != None:
+                mask = torch.logical_or(mask, padding_mask)
+            
         for layer in self.encoder_layers:
-            x = layer(x)
+            x = layer(x, mask)
 
         return x
+    
+#     def flops(self):
+#         return self.n_layer * self.encoder_layers[0].flops()
     
     
 # Encoder layer
@@ -48,26 +65,44 @@ class EncoderLayer(nn.Module):
         for p in self.attention_layer.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+#                 trunc_normal_(p, std=.02)
             else:
                 nn.init.zeros_(p)
         for p in self.feed_forward_layer.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+#                 trunc_normal_(p, std=.02)
             else:
                 nn.init.zeros_(p)
+        for layer in self.norm_layers:
+            nn.init.ones_(layer.weight)
+            nn.init.zeros_(layer.bias)
         
-    def forward(self, x):
+    def forward(self, x, mask):
         """
         <input>
             x : (n_batch, H, W, d_embed)
+            mask : (1, n_head, nh, nw, query_window_size^2, key_window_size^2)
         """
         out = self.norm_layers[0](x)  # Layer norm first
-        out = self.attention_layer(out)
+        out = self.attention_layer(out, mask)
         x = self.dropout_layer(out) + x
         
         out = self.norm_layers[1](x)
         out = self.feed_forward_layer(out)
         return self.dropout_layer(out) + x
+    
+#     def flops(self):
+#         flops = 0
+#         N = self.attention_layer.query_height ** 2
+#         d_embed = self.attention_layer.d_embed
+#         # norm layers
+#         flops += 2 * N * d_embed
+#         # attention module
+#         flops += self.attention_layer.flops()
+#         # ff layer
+#         flops += self.feed_forward_layer.flops(N)
+#         return flops
     
     
     
@@ -78,6 +113,12 @@ class MultiHeadAttentionLayer(nn.Module):
                  key_height, key_width, key_window_size,
                  relative_position_embedding=True):
         super(MultiHeadAttentionLayer, self).__init__()
+        self.d_embed = d_embed
+        self.query_height = query_height
+        self.key_height = key_height
+        self.query_width = query_width
+        self.key_width = key_width
+        
         self.n_head = n_head
         self.d_k = d_embed // n_head
         self.scale = 1 / np.sqrt(self.d_k)
@@ -101,10 +142,10 @@ class MultiHeadAttentionLayer(nn.Module):
                            'shift_size' : key_window_size // 2,
                            'window_size_sq' : key_window_size * key_window_size}
         
-        # Masking matrix
-        mask = functions.masking_matrix(n_head, query_height, query_width, query_window_size, self.query_config['shift_size'],
-                                        key_height, key_width, key_window_size, self.key_config['shift_size'])
-        self.register_buffer('mask', mask)
+#         # Masking matrix
+#         mask = functions.masking_matrix(n_head, query_height, query_width, query_window_size, self.query_config['shift_size'],
+#                                         key_height, key_width, key_window_size, self.key_config['shift_size'])
+#         self.register_buffer('mask', mask)
         
         self.relative_position_embedding = relative_position_embedding
         if relative_position_embedding:
@@ -116,11 +157,12 @@ class MultiHeadAttentionLayer(nn.Module):
             # Set 2D relative position embedding index.
             self.relative_position_index = functions.relative_position_index(query_window_size, key_window_size)
 
-    def forward(self, x, z):
+    def forward(self, x, z, mask):
         """
         <input>
             x : (n_batch, H, W, d_embed), input query
             z : (n_batch, _H, _W, d_embed), encoder output
+            mask : (1, n_head, nh, nw, query_window_size^2, key_window_size^2)
             
         <output>
             attention : (n_batch, H, W, d_embed)
@@ -144,9 +186,12 @@ class MultiHeadAttentionLayer(nn.Module):
 
         # Partition windows.
         # Q, K, V : (n_batch, n_head, nh, nw, window_size^2, d_k)
-        query = functions.partition_window(query, self.query_config['window_size'], self.query_config['nh'], self.query_config['nw'])
-        key = functions.partition_window(key, self.key_config['window_size'], self.key_config['nh'], self.key_config['nw'])
-        value = functions.partition_window(value, self.key_config['window_size'], self.key_config['nh'], self.key_config['nw'])
+#         query = functions.partition_window(query, self.query_config['window_size'], self.query_config['nh'], self.query_config['nw'])
+        query = functions.partition_window(query, self.query_config['window_size'])
+#         key = functions.partition_window(key, self.key_config['window_size'], self.key_config['nh'], self.key_config['nw'])
+        key = functions.partition_window(key, self.key_config['window_size'])
+#         value = functions.partition_window(value, self.key_config['window_size'], self.key_config['nh'], self.key_config['nw'])
+        value = functions.partition_window(value, self.key_config['window_size'])
         
         # Compute attention score.
         x = torch.matmul(query, key.transpose(-1, -2)) * self.scale
@@ -159,7 +204,7 @@ class MultiHeadAttentionLayer(nn.Module):
             x = x + position_embedding
         
         # Add masking matrix.
-        x.masked_fill_(self.mask, -1e9)
+        x.masked_fill_(mask, -1e9)
 
         # Compute attention probability and values.
         x = self.softmax(x)
@@ -175,6 +220,17 @@ class MultiHeadAttentionLayer(nn.Module):
         x = x.permute(0, 2, 3, 1, 4).contiguous().view(n_batch, H, W, -1)
         return self.output_fc_layer(x)
     
+#     def flops(self):
+#         flops = 0
+#         # query and output
+#         flops += 2 * self.query_height * self.query_width * (self.d_embed ** 2)
+#         # key and value
+#         flops += 2 * self.key_height * self.key_width * (self.d_embed ** 2)
+#         # window-wise attention
+#         flops += 2 * self.query_config['window_size_sq'] * self.key_config['window_size_sq']\
+#                    * self.query_config['nh'] * self.query_config['nw'] * self.d_embed
+#         return flops
+    
     
 # Multi-head SELF-attention layer
 class MultiHeadSelfAttentionLayer(MultiHeadAttentionLayer):
@@ -184,15 +240,16 @@ class MultiHeadSelfAttentionLayer(MultiHeadAttentionLayer):
                                                           height, width, window_size,
                                                           relative_position_embedding)
 
-    def forward(self, x):
+    def forward(self, x, mask):
         """
         <input>
             x : (n_batch, H, W, d_embed)
+            mask : (1, n_head, nh, nw, window_size^2)
             
         <output>
             attention : (n_batch, H, W, d_embed)
         """
-        return super(MultiHeadSelfAttentionLayer, self).forward(x, x)
+        return super(MultiHeadSelfAttentionLayer, self).forward(x, x, mask)
 
     
     
@@ -200,6 +257,9 @@ class MultiHeadSelfAttentionLayer(MultiHeadAttentionLayer):
 class PositionWiseFeedForwardLayer(nn.Module):
     def __init__(self, d_embed, d_ff, dropout=0.1):
         super(PositionWiseFeedForwardLayer, self).__init__()
+        self.d_embed = d_embed
+        self.d_ff = d_ff
+        
         self.first_fc_layer = nn.Linear(d_embed, d_ff)
         self.second_fc_layer = nn.Linear(d_ff, d_embed)
         self.activation_layer = nn.GELU()
@@ -209,6 +269,9 @@ class PositionWiseFeedForwardLayer(nn.Module):
         x = self.first_fc_layer(x)
         x = self.dropout_layer(self.activation_layer(x))
         return self.second_fc_layer(x)
+    
+#     def flops(self, N):
+#         return 2 * N * self.d_embed * self.d_ff
     
     
     
@@ -272,13 +335,16 @@ def get_transformer_encoder(d_embed=128,
         positional_encoding_layer = AbsolutePositionEmbedding(d_embed, max_seq_len, dropout)
     elif positional_encoding == None or positional_encoding == 'None':
         positional_encoding_layer = None
+        
+    # Masking matrix
+    mask = functions.masking_matrix(n_head, n_patch, n_patch, window_size, window_size//2)
     
     attention_layer = MultiHeadSelfAttentionLayer(d_embed, n_head, n_patch, n_patch, window_size, relative_position_embedding)
     feed_forward_layer = PositionWiseFeedForwardLayer(d_embed, d_ff, dropout)
     norm_layer = nn.LayerNorm(d_embed, eps=1e-6)
-    encoder_layer = EncoderLayer(attention_layer, feed_forward_layer, norm_layer, dropout)
     
-    return TransformerEncoder(positional_encoding_layer, encoder_layer, n_layer)
+    encoder_layer = EncoderLayer(attention_layer, feed_forward_layer, norm_layer, dropout)
+    return TransformerEncoder(positional_encoding_layer, encoder_layer, n_layer, mask)
 
 
 #####################################################################################################
@@ -365,8 +431,13 @@ def get_transformer_decoder(d_embed=128,
                             n_layer=12,
                             n_head=4,
                             d_ff=128*4,
-                            query_n_patch=48,
+                            # query_n_patch=48,
+                            # query_window_size=8,
+                            # test code #
+                            n_patch=48,
+                            self_window_size=4,
                             query_window_size=8,
+                            # test code //
                             key_n_patch=24,
                             key_window_size=4,
                             dropout=0.1):
@@ -379,10 +450,10 @@ def get_transformer_decoder(d_embed=128,
         positional_encoding_layer = None
     
     self_attention_layer = MultiHeadSelfAttentionLayer(d_embed, n_head,
-                                                       query_n_patch, query_n_patch, query_window_size,
+                                                       n_patch, n_patch, self_window_size,
                                                        relative_position_embedding)
     attention_layer = MultiHeadAttentionLayer(d_embed, n_head,
-                                              query_n_patch, query_n_patch, query_window_size,
+                                              n_patch, n_patch, query_window_size,
                                               key_n_patch, key_n_patch, key_window_size,
                                               relative_position_embedding)
     feed_forward_layer = PositionWiseFeedForwardLayer(d_embed, d_ff, dropout)

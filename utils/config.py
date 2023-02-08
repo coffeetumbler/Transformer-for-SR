@@ -2,32 +2,19 @@ import os
 
 # Directory settings
 PROJECT_DIR = os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
-DATASET_DIR = '/home/lahj91/SR/datasets/'
-MATLAB_DATASET_DIR = '/data/SR/'
+MATLAB_DATASET_DIR = '/mnt/d/ubuntu/datasets/sr_benchmark/'
 LOG_DIR = 'logs/'
 
-MODE_PATH = {"train" : DATASET_DIR + 'SR_training_datasets/',
-             "test" : DATASET_DIR + 'SR_testing_datasets/',
-             "valid" : DATASET_DIR + 'SR_testing_datasets/'}
 MATLAB_MODE_PATH = {"train" : MATLAB_DATASET_DIR + 'Data/train/',
-             "test" : MATLAB_DATASET_DIR + 'Data/valid/',
-             "valid" : MATLAB_DATASET_DIR + 'Data/valid/'}
+                    "test" : MATLAB_DATASET_DIR + 'Data/valid_ipt/',
+                    "evaluation" : MATLAB_DATASET_DIR + 'Data/valid_ipt/',
+                    "valid" : MATLAB_DATASET_DIR + 'Data/valid_ipt/'}
 
-
-
-
-DATA_LIST_DIR = DATASET_DIR + 'DataName/'
 MATLAB_DATA_LIST_DIR = MATLAB_DATASET_DIR + 'Data/DataName/'
 
-
-
-TRAINING_DATA_LIST = ["DIV2K", "BSDS200", "General100"]
-TEST_DATA_LIST = ["DIV2K", "BSD100", "Urban100", "Manga109", "Set5", "Set14"]
-
 MATLAB_TRAINING_DATA_LIST = ["DIV2K", "Flickr2K"]
-MATLAB_TEST_DATA_LIST = ["Set5", "Set14"]##to be updated
-# MATLAB_TEST_DATA_LIST = ["BSD100", "Urban100", "Manga109", "Set5", "Set14"]
-
+MATLAB_VALID_DATA_LIST = ["Set5", "Set14"]
+MATLAB_EVALUATION_DATA_LIST = ["BSD100", "Urban100", "Set5", "Set14"]#manga109 추가 해야 됨
 
 # Image settings
 PIXEL_MAX_VALUE = 255
@@ -39,4 +26,5 @@ GRAY_COEF = [24.966, 128.553, 65.481]  # BGR order
 GRAY_BIAS = 16.
 
 # Validation settings
-PIXEL_INTERSECTION = 18
+PIXEL_INTERSECTION = 72
+IMG_SIZE_UNIT = 24

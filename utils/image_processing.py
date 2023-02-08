@@ -63,13 +63,13 @@ def cubic(x):
         (-0.5*absx3 + 2.5*absx2 - 4*absx + 2) * (((absx > 1)*(absx <= 2)).type_as(absx))
 
 
-def calculate_weights_indices(in_length, out_length, scale, kernel, kernel_width, antialiasing):
+def calculate_weights_indices(in_length, out_length, scale, kernel, kernel_width, antialiasing, device=torch.device('cpu')):
     if (scale < 1) and (antialiasing):
         # Use a modified kernel to simultaneously interpolate and antialias- larger kernel width
         kernel_width = kernel_width / scale
 
     # Output-space coordinates
-    x = torch.linspace(1, out_length, out_length)
+    x = torch.linspace(1, out_length, out_length).to(device)
 
     # Input-space coordinates. Calculate the inverse mapping such that 0.5
     # in output space maps to 0.5 in input space, and 0.5+scale in output
@@ -88,7 +88,7 @@ def calculate_weights_indices(in_length, out_length, scale, kernel, kernel_width
     # The indices of the input pixels involved in computing the k-th output
     # pixel are in row k of the indices matrix.
     indices = left.view(out_length, 1).expand(out_length, P) + torch.linspace(0, P - 1, P).view(
-        1, P).expand(out_length, P)
+        1, P).expand(out_length, P).to(device)
 
     # The weights used to compute the k-th output pixel are in row k of the
     # weights matrix.
@@ -121,7 +121,7 @@ def calculate_weights_indices(in_length, out_length, scale, kernel, kernel_width
 # --------------------------------------------
 # imresize for tensor image [0, 1]
 # --------------------------------------------
-def imresize(img, scale, antialiasing=True):
+def imresize(img, scale, antialiasing=True, device=torch.device('cpu')):
     # Now the scale should be the same for H and W
     # input: img: pytorch tensor, CHW or HW [0,1]
     # output: CHW or HW [0,1] w/o round
@@ -140,25 +140,25 @@ def imresize(img, scale, antialiasing=True):
 
     # get weights and indices
     weights_H, indices_H, sym_len_Hs, sym_len_He = calculate_weights_indices(
-        in_H, out_H, scale, kernel, kernel_width, antialiasing)
+        in_H, out_H, scale, kernel, kernel_width, antialiasing, device)
     weights_W, indices_W, sym_len_Ws, sym_len_We = calculate_weights_indices(
-        in_W, out_W, scale, kernel, kernel_width, antialiasing)
+        in_W, out_W, scale, kernel, kernel_width, antialiasing, device)
     # process H dimension
     # symmetric copying
-    img_aug = torch.FloatTensor(in_C, in_H + sym_len_Hs + sym_len_He, in_W)
+    img_aug = torch.FloatTensor(in_C, in_H + sym_len_Hs + sym_len_He, in_W).to(device)
     img_aug.narrow(1, sym_len_Hs, in_H).copy_(img)
 
     sym_patch = img[:, :sym_len_Hs, :]
-    inv_idx = torch.arange(sym_patch.size(1) - 1, -1, -1).long()
+    inv_idx = torch.arange(sym_patch.size(1) - 1, -1, -1).long().to(device)
     sym_patch_inv = sym_patch.index_select(1, inv_idx)
     img_aug.narrow(1, 0, sym_len_Hs).copy_(sym_patch_inv)
 
     sym_patch = img[:, -sym_len_He:, :]
-    inv_idx = torch.arange(sym_patch.size(1) - 1, -1, -1).long()
+    inv_idx = torch.arange(sym_patch.size(1) - 1, -1, -1).long().to(device)
     sym_patch_inv = sym_patch.index_select(1, inv_idx)
     img_aug.narrow(1, sym_len_Hs + in_H, sym_len_He).copy_(sym_patch_inv)
 
-    out_1 = torch.FloatTensor(in_C, out_H, in_W)
+    out_1 = torch.FloatTensor(in_C, out_H, in_W).to(device)
     kernel_width = weights_H.size(1)
     for i in range(out_H):
         idx = int(indices_H[i][0])
@@ -167,20 +167,20 @@ def imresize(img, scale, antialiasing=True):
 
     # process W dimension
     # symmetric copying
-    out_1_aug = torch.FloatTensor(in_C, out_H, in_W + sym_len_Ws + sym_len_We)
+    out_1_aug = torch.FloatTensor(in_C, out_H, in_W + sym_len_Ws + sym_len_We).to(device)
     out_1_aug.narrow(2, sym_len_Ws, in_W).copy_(out_1)
 
     sym_patch = out_1[:, :, :sym_len_Ws]
-    inv_idx = torch.arange(sym_patch.size(2) - 1, -1, -1).long()
+    inv_idx = torch.arange(sym_patch.size(2) - 1, -1, -1).long().to(device)
     sym_patch_inv = sym_patch.index_select(2, inv_idx)
     out_1_aug.narrow(2, 0, sym_len_Ws).copy_(sym_patch_inv)
 
     sym_patch = out_1[:, :, -sym_len_We:]
-    inv_idx = torch.arange(sym_patch.size(2) - 1, -1, -1).long()
+    inv_idx = torch.arange(sym_patch.size(2) - 1, -1, -1).long().to(device)
     sym_patch_inv = sym_patch.index_select(2, inv_idx)
     out_1_aug.narrow(2, sym_len_Ws + in_W, sym_len_We).copy_(sym_patch_inv)
 
-    out_2 = torch.FloatTensor(in_C, out_H, out_W)
+    out_2 = torch.FloatTensor(in_C, out_H, out_W).to(device)
     kernel_width = weights_W.size(1)
     for i in range(out_W):
         idx = int(indices_W[i][0])

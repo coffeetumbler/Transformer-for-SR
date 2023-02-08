@@ -12,7 +12,7 @@ def clone_layer(module, N):
 
 
 # Partition windows of splited heads.
-def partition_window(x, window_size, nh, nw):
+def partition_window(x, window_size):
     """
     <input>
         x : (n_batch, n_head, H, W, C)
@@ -24,6 +24,7 @@ def partition_window(x, window_size, nh, nw):
         windows : (n_batch, n_head, num_window_height, num_window_width, window_size^2, C)
     """
     n_batch, n_head, H, W, C = x.shape
+    nh, nw = H // window_size, W // window_size
     x = x.view(n_batch, n_head, nh, window_size, nw, window_size, C)
     return x.transpose(3, 4).contiguous().view(n_batch, n_head, nh, nw, window_size*window_size, C)
 
@@ -81,8 +82,7 @@ def masking_matrix(n_head, H, W, window_size, shift_size,
     masking_heads_query[[1,3], :, :shift_size] = 1
     masking_heads_query[[2,3], :shift_size] += 2
 
-    masking_heads_query = partition_window(masking_heads_query.unsqueeze(0).unsqueeze(-1),
-                                           window_size, H // window_size, W // window_size)
+    masking_heads_query = partition_window(masking_heads_query.unsqueeze(0).unsqueeze(-1), window_size)
     
     # Partitioned regions for key.
     if H_2 == None:
@@ -92,8 +92,7 @@ def masking_matrix(n_head, H, W, window_size, shift_size,
         masking_heads_key[[1,3], :, :shift_size_2] = 1
         masking_heads_key[[2,3], :shift_size_2] += 2
 
-        masking_heads_key = partition_window(masking_heads_key.unsqueeze(0).unsqueeze(-1),
-                                             window_size_2, H_2 // window_size_2, W_2 // window_size_2)
+        masking_heads_key = partition_window(masking_heads_key.unsqueeze(0).unsqueeze(-1), window_size_2)
     
     # Create valid masks for heads.
     masking_heads = masking_heads_query - masking_heads_key.transpose(-1, -2)
