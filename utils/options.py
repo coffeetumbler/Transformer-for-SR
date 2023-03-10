@@ -45,7 +45,8 @@ def parse_args():
     parser.add_argument('--n_residual_block', type=int, default=3)
     parser.add_argument('--hidden_dim_rate', type=int, default=2)
     parser.add_argument('--version', type=float, default=1.1)
-    parser.add_argument('--dropout', type=float, default=0.1)
+    parser.add_argument('--dropout', type=float, default=0)
+    parser.add_argument('--path_dropout', type=float, default=0.1)
     
     # Training options
     parser.add_argument('--train_dataset', type=str, default='mixed',
@@ -73,7 +74,7 @@ def parse_args():
 #     parser.add_argument('--t_in_epochs', type=bool, default=False)
 #     parser.add_argument('--cycle_limit', type=int, default=1)
 
-    parser.add_argument('--grad_clip_norm', default=0.1, type=float,
+    parser.add_argument('--grad_clip_norm', default=1, type=float,
                         help='Maximum gradient norm in gradient clipping')
     parser.add_argument('--summary_steps', default=40, type=int,
                         help='Training summary frequency')

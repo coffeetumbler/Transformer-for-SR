@@ -11,6 +11,7 @@ from models import whole_models
 
 from utils.dataloader import get_dataloader, valid_batch_making
 from utils.options_test import parse_args  # option arguments
+from utils.functions import simple_upscale
 from utils import config
 from utils import image_processing
 
@@ -92,7 +93,7 @@ def test(model, dataloader_test, batch_size, test_size, trim_size, device,
 
                 for keys, degraded_items in batch_making:
                     degraded_items= degraded_items.to(device)
-                    degradeds = model(degraded_items)
+                    degradeds = model.evaluate(degraded_items)
 
                     img_h, img_w = degradeds[0].shape[1], degradeds[0].shape[2]
 

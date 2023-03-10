@@ -114,3 +114,23 @@ class UpsamplingLayer(nn.Module):
         
         x = self.linear_layer(x).view(n_batch, H, W, self.upscale, self.upscale, self.d_embed).transpose(2, 3)
         return x.contiguous().view(n_batch, H*self.upscale, W*self.upscale, self.d_embed)
+    
+    
+    
+# Downsampling layer
+class DownsamplingLayer(nn.Module):
+    def __init__(self, downscale=2, d_embed=128, factor=2):
+        super(DownsamplingLayer, self).__init__()
+        self.linear_embedding = nn.Conv2d(d_embed, d_embed*factor, kernel_size=downscale, stride=downscale, padding=0)
+        trunc_normal_(self.linear_embedding.weight, std=.02)
+        nn.init.zeros_(self.linear_embedding.bias)
+        
+    def forward(self, x):
+        """
+        <input>
+            x : (n_batch, H, W, d_embed)
+            
+        <output>
+            x : (n_batch, H/downscale, W/downscale, d_embed*factor)
+        """
+        return self.linear_embedding(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1).contiguous()

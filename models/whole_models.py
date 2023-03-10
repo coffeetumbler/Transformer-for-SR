@@ -880,8 +880,8 @@ class SREncoder(nn.Module):
                                out[0, -padding_info[0]:, :padding_info[1]], out[0, -padding_info[0]:, -padding_info[1]:]))
         
         if not save_memory:
-#             out = self.encoder_1(out, load_mask, padding_mask[0])
-            out = self.encoder_1(out)
+            out = self.encoder_1(out, load_mask, padding_mask[0])
+#             out = self.encoder_1(out)
         else:
             _out = []
             for i in range(len(out)):
@@ -912,8 +912,8 @@ class SREncoder(nn.Module):
                                out[0, -padding_info[0]:, :padding_info[1]], out[0, -padding_info[0]:, -padding_info[1]:]))
     
         if not save_memory:
-#             out = self.encoder_2(out, load_mask, padding_mask[1])
-            out = self.encoder_2(out)
+            out = self.encoder_2(out, load_mask, padding_mask[1])
+#             out = self.encoder_2(out)
         else:
             _out = []
             for i in range(len(out)):
@@ -943,8 +943,8 @@ class SREncoder(nn.Module):
                                out[0, -padding_info[0]:, :padding_info[1]], out[0, -padding_info[0]:, -padding_info[1]:]))
             
         if not save_memory:
-#             out = self.encoder_3(out, load_mask, padding_mask[2])
-            out = self.encoder_3(out)
+            out = self.encoder_3(out, load_mask, padding_mask[2])
+#             out = self.encoder_3(out)
         else:
             _out = []
             for i in range(len(out)):
@@ -976,8 +976,8 @@ class SREncoder(nn.Module):
                                out[0, -padding_info[2]:, -padding_info[3]:]))
         
         if not save_memory:
-#             out = self.encoder_4(out, load_mask, padding_mask[3])
-            out = self.encoder_4(out)
+            out = self.encoder_4(out, load_mask, padding_mask[3])
+#             out = self.encoder_4(out)
         else:
             _out = []
             for i in range(len(out)):

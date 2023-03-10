@@ -230,14 +230,19 @@ class dataset_SR(Dataset):
                             0:(origin.shape[1]//self.SR_mode)*self.SR_mode]
             degraded = cv2.imread(view_path_degraded, cv2.IMREAD_COLOR).copy()
 
-            idx_x = [i for i in range(0,origin.shape[0]-self.img_size+1, self.img_size-self.intersection)]
-            # idx_x_end = idx_x + self.img_size
-            if idx_x[-1] != (origin.shape[0] - self.img_size):
-                idx_x = np.append(idx_x, origin.shape[0]-self.img_size)
+            if origin.shape[0] >= self.img_size:
+                idx_x = [i for i in range(0, origin.shape[0]-self.img_size+1, self.img_size-self.intersection)]
+                if idx_x[-1] != (origin.shape[0] - self.img_size):
+                    idx_x = np.append(idx_x, origin.shape[0]-self.img_size)
+            else:
+                idx_x = [0]
 
-            idx_y = [i for i in range(0,origin.shape[1]-self.img_size+1, self.img_size-self.intersection)]
-            if idx_y[-1] != (origin.shape[1] - self.img_size):
-                idx_y = np.append(idx_y, origin.shape[1]-self.img_size)
+            if origin.shape[1] >= self.img_size:
+                idx_y = [i for i in range(0,origin.shape[1]-self.img_size+1, self.img_size-self.intersection)]
+                if idx_y[-1] != (origin.shape[1] - self.img_size):
+                    idx_y = np.append(idx_y, origin.shape[1]-self.img_size)
+            else:
+                idx_y = [0]
 
             item_degraded = {}
             mask = torch.zeros(origin.shape[0], origin.shape[1])

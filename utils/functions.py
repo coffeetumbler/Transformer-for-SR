@@ -46,27 +46,44 @@ def merge_window(windows, window_size):
 
 
 # 4-class cyclic shifting
-def cyclic_shift(x, shift_size):
+def cyclic_shift(x, shift_size, n_class=4):
     """
     <input>
         x : (n_batch, n_head, H, W, C)
         shift_size : (int)
+        n_class : number of classes for window shifting
     """
-    n_batch, n_head, H, W, C = x.shape
-    x = x.view(n_batch, 4, n_head // 4, H, W, C).transpose(0, 1).contiguous()
-    x_1 = torch.roll(x[1], shifts=shift_size, dims=-2)
-    x_2 = torch.roll(x[2], shifts=shift_size, dims=-3)
-    x_3 = torch.roll(x[3], shifts=(shift_size, shift_size), dims=(-2, -3))
-    return torch.stack([x[0], x_1, x_2, x_3]).transpose(0, 1).contiguous().view(n_batch, n_head, H, W, C)
+    if n_class == 4:
+        n_batch, n_head, H, W, C = x.shape
+        x = x.view(n_batch, 4, n_head // 4, H, W, C).transpose(0, 1).contiguous()
+        x_1 = torch.roll(x[1], shifts=shift_size, dims=-2)
+        x_2 = torch.roll(x[2], shifts=shift_size, dims=-3)
+        x_3 = torch.roll(x[3], shifts=(shift_size, shift_size), dims=(-2, -3))
+        return torch.stack([x[0], x_1, x_2, x_3]).transpose(0, 1).contiguous().view(n_batch, n_head, H, W, C)
+    elif n_class == 2:
+        n_batch, n_head, H, W, C = x.shape
+        x = x.view(n_batch, 2, n_head // 2, H, W, C).transpose(0, 1).contiguous()
+        x_1 = torch.roll(x[1], shifts=(shift_size, shift_size), dims=(-2, -3))
+        return torch.stack([x[0], x_1]).transpose(0, 1).contiguous().view(n_batch, n_head, H, W, C)
+    elif n_class == -2:
+        n_batch, n_head, H, W, C = x.shape
+        x = x.view(n_batch, 2, n_head // 2, H, W, C).transpose(0, 1).contiguous()
+        x_0 = torch.roll(x[1], shifts=shift_size, dims=-2)
+        x_1 = torch.roll(x[2], shifts=shift_size, dims=-3)
+        return torch.stack([x_0, x_1]).transpose(0, 1).contiguous().view(n_batch, n_head, H, W, C)
+    elif n_class == 1:
+        return torch.roll(x, shifts=(shift_size, shift_size), dims=(-2, -3))
 
 
 # Make masking matrix for 4-class split heads.
 def masking_matrix(n_head, H, W, window_size, shift_size,
-                   H_2=None, W_2=None, window_size_2=None, shift_size_2=None):
+                   H_2=None, W_2=None, window_size_2=None, shift_size_2=None,
+                   n_class=4):
     """
     <input>
         n_head, H, W, window_size, shift_size : (int)
         (optional) H_2, W_2, window_size_2, shift_size_2 : (int) key configs, when key != query
+        n_class : number of classes for window shifting
         
     <return>
         masking_heads : (1, n_head, num_window_height, num_window_width, window_size^2, window_size^2)
@@ -78,9 +95,22 @@ def masking_matrix(n_head, H, W, window_size, shift_size,
         assert W_2 // window_size_2 == W // window_size
     
     # Partitioned regions for query.
-    masking_heads_query = torch.zeros(4, H, W, dtype=int)
-    masking_heads_query[[1,3], :, :shift_size] = 1
-    masking_heads_query[[2,3], :shift_size] += 2
+    if n_class == 4:
+        masking_heads_query = torch.zeros(4, H, W, dtype=int)
+        masking_heads_query[[1,3], :, :shift_size] = 1
+        masking_heads_query[[2,3], :shift_size] += 2
+    elif n_class == 2:
+        masking_heads_query = torch.zeros(2, H, W, dtype=int)
+        masking_heads_query[1, :, :shift_size] = 1
+        masking_heads_query[1, :shift_size] += 2
+    elif n_class == -2:
+        masking_heads_query = torch.zeros(2, H, W, dtype=int)
+        masking_heads_query[0, :, :shift_size] = 1
+        masking_heads_query[1, :shift_size] = 1
+    elif n_class == 1:
+        masking_heads_query = torch.zeros(1, H, W, dtype=int)
+        masking_heads_query[0, :, :shift_size] = 1
+        masking_heads_query[0, :shift_size] += 2
 
     masking_heads_query = partition_window(masking_heads_query.unsqueeze(0).unsqueeze(-1), window_size)
     
@@ -88,9 +118,22 @@ def masking_matrix(n_head, H, W, window_size, shift_size,
     if H_2 == None:
         masking_heads_key = masking_heads_query
     else:
-        masking_heads_key = torch.zeros(4, H_2, W_2, dtype=int)
-        masking_heads_key[[1,3], :, :shift_size_2] = 1
-        masking_heads_key[[2,3], :shift_size_2] += 2
+        if n_class == 4:
+            masking_heads_key = torch.zeros(4, H_2, W_2, dtype=int)
+            masking_heads_key[[1,3], :, :shift_size_2] = 1
+            masking_heads_key[[2,3], :shift_size_2] += 2
+        elif n_class == 2:
+            masking_heads_key = torch.zeros(2, H_2, W_2, dtype=int)
+            masking_heads_key[1, :, :shift_size_2] = 1
+            masking_heads_key[1, :shift_size_2] += 2
+        elif n_class == -2:
+            masking_heads_key = torch.zeros(2, H_2, W_2, dtype=int)
+            masking_heads_key[0, :, :shift_size_2] = 1
+            masking_heads_key[1, :shift_size_2] = 1
+        elif n_class == 1:
+            masking_heads_key = torch.zeros(1, H_2, W_2, dtype=int)
+            masking_heads_key[0, :, :shift_size_2] = 1
+            masking_heads_key[0, :shift_size_2] += 2
 
         masking_heads_key = partition_window(masking_heads_key.unsqueeze(0).unsqueeze(-1), window_size_2)
     
@@ -98,7 +141,7 @@ def masking_matrix(n_head, H, W, window_size, shift_size,
     masking_heads = masking_heads_query - masking_heads_key.transpose(-1, -2)
     masking_heads = masking_heads != 0
     
-    return masking_heads.repeat_interleave(n_head // 4, dim=1)
+    return masking_heads.repeat_interleave(n_head // n_class, dim=1)
 
 
 # Indices for 2D relative position bias for windows
@@ -139,3 +182,16 @@ def relative_position_index(window_size, key_window_size=None):
     relative_coord -= relative_coord[0, -1]
     
     return relative_coord.flatten()
+
+
+# Simple upscaling function
+def simple_upscale(img, upscale):
+    """
+    <input>
+        img : (..., H, W)
+        upscale : (int) upscale factor
+        
+    <return>
+        img : (..., upscale*H, upscale*W)
+    """
+    return img.repeat_interleave(upscale, dim=-1).repeat_interleave(upscale, dim=-2)
